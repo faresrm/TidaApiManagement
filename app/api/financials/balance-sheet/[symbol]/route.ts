@@ -2,10 +2,12 @@ import { createClient } from "@/lib/supabase/server"
 import { NextResponse } from "next/server"
 import { validateApiKey, checkRateLimit, logUsage, ApiError, ApiResponse, formatApiMessage } from "@/lib/api-utils"
 
-export const revalidate = 3600 // Revalidate data every hour
-
 // Define the resource type for this endpoint
 const RESOURCE_TYPE = "balance sheet statements"
+
+// Use Next.js 13+ route segment config for better caching control
+export const dynamic = "force-dynamic" // Default is auto
+export const revalidate = 3600 // Revalidate every hour
 
 export async function GET(request: Request, context: { params: { symbol: string } }) {
     const symbol = context.params.symbol.toUpperCase()
@@ -39,6 +41,10 @@ export async function GET(request: Request, context: { params: { symbol: string 
         const validatedLimit = Math.min(Math.max(limit, 1), 100)
         const validatedPage = Math.max(page, 0)
         const offset = validatedPage * validatedLimit
+
+        // Generate a cache tag based on the request parameters
+        const cacheTag = `balance-sheet-${symbol}-${validatedLimit}-${validatedPage}`
+
         console.log(
             `GET request received for balance sheet statement of ${symbol}. Limit: ${validatedLimit}, Page: ${validatedPage}, Offset: ${offset}`,
         )
@@ -92,21 +98,25 @@ export async function GET(request: Request, context: { params: { symbol: string 
             totalCount: count || 0,
         })
 
-        return NextResponse.json(
-            {
-                symbol,
-                limit: validatedLimit,
-                page: validatedPage,
-                total_count: count || 0,
-                balance_sheets: balanceSheets,
-                message: successMessage,
-            },
-            {
-                headers: {
-                    "Cache-Control": "public, max-age=60, stale-while-revalidate=3600",
-                },
-            },
-        )
+        // Create a response with improved cache headers
+        const response = NextResponse.json({
+            symbol,
+            limit: validatedLimit,
+            page: validatedPage,
+            total_count: count || 0,
+            balance_sheets: balanceSheets,
+            message: successMessage,
+            cached: true, // Add this to help with debugging
+            cache_tag: cacheTag, // Add this to help with debugging
+        })
+
+        // Set more specific cache headers
+        response.headers.set("Cache-Control", "public, max-age=3600, s-maxage=3600, stale-while-revalidate=86400")
+        response.headers.set("CDN-Cache-Control", "public, max-age=3600")
+        response.headers.set("Vercel-CDN-Cache-Control", "public, max-age=3600")
+        response.headers.set("X-Cache-Tag", cacheTag)
+
+        return response
     } catch (error: any) {
         console.error("Error processing the request:", error)
         try {

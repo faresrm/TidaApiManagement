@@ -2,10 +2,12 @@ import { createClient } from "@/lib/supabase/server"
 import { NextResponse } from "next/server"
 import { validateApiKey, checkRateLimit, logUsage, ApiError, ApiResponse, formatApiMessage } from "@/lib/api-utils"
 
-export const revalidate = 3600 // Revalidate data every hour
-
 // Define the resource type for this endpoint
 const RESOURCE_TYPE = "historical prices"
+
+// Use Next.js 13+ route segment config for better caching control
+export const dynamic = "force-dynamic" // Default is auto
+export const revalidate = 3600 // Revalidate every hour
 
 export async function GET(request: Request, context: { params: { symbol: string } }) {
     const symbol = context.params.symbol.toUpperCase()
@@ -57,6 +59,9 @@ export async function GET(request: Request, context: { params: { symbol: string 
             await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "error")
             return NextResponse.json({ error: ApiResponse.INVALID_DATE_RANGE }, { status: 400 })
         }
+
+        // Generate a cache tag based on the request parameters
+        const cacheTag = `historical-price-${symbol}-${fromDate}-${toDate}`
 
         // Retrieve historical prices
         const { data: historicalPrices, error } = await supabase
@@ -115,21 +120,25 @@ export async function GET(request: Request, context: { params: { symbol: string 
             totalCount: historicalPrices.length,
         })
 
-        return NextResponse.json(
-            {
-                symbol,
-                from_date: fromDate,
-                to_date: toDate,
-                count: historicalPrices.length,
-                historical_prices: historicalPrices,
-                message: successMessage,
-            },
-            {
-                headers: {
-                    "Cache-Control": "public, max-age=60, stale-while-revalidate=3600",
-                },
-            },
-        )
+        // Create a response with improved cache headers
+        const response = NextResponse.json({
+            symbol,
+            from_date: fromDate,
+            to_date: toDate,
+            count: historicalPrices.length,
+            historical_prices: historicalPrices,
+            message: successMessage,
+            cached: true, // Add this to help with debugging
+            cache_tag: cacheTag, // Add this to help with debugging
+        })
+
+        // Set more specific cache headers
+        response.headers.set("Cache-Control", "public, max-age=3600, s-maxage=3600, stale-while-revalidate=86400")
+        response.headers.set("CDN-Cache-Control", "public, max-age=3600")
+        response.headers.set("Vercel-CDN-Cache-Control", "public, max-age=3600")
+        response.headers.set("X-Cache-Tag", cacheTag)
+
+        return response
     } catch (error: any) {
         console.error("Error processing the request:", error)
         try {

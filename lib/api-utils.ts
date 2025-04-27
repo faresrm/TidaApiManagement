@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/server"
-//Enum Messages
+
 export enum ApiError {
   MISSING_API_KEY = "Missing API key. Use the query parameter '?apikey=YOUR_API_KEY'",
   INVALID_API_KEY = "Invalid API key",
@@ -22,7 +22,6 @@ export enum ApiResponse {
   DATA_RETRIEVAL_SUCCESS = "{resourceType} for symbol '{symbol}' retrieved successfully. Displaying page {page} of {totalPages} (Total: {totalCount} entries).",
   DATA_RETRIEVAL_ERROR = "Error retrieving {resourceType}",
   PROCESSING_ERROR = "An error occurred... Details: {details}",
-  NO_Company_DATA_FOUND = "No companies found.",
 
   // Date-related error messages
   MISSING_DATE_PARAMS = "The 'from' and 'to' parameters are required",
@@ -42,6 +41,39 @@ export function formatApiMessage(message: string, params: Record<string, string 
   }
 
   return formattedMessage
+}
+
+/**
+ * Creates a cache key for API responses based on the request parameters
+ * @param request The incoming request
+ * @param additionalParams Additional parameters to include in the cache key
+ * @returns A string that can be used as a cache key
+ */
+export function createCacheKey(request: Request, additionalParams: Record<string, string> = {}): string {
+  const url = new URL(request.url)
+  const path = url.pathname
+
+  // Get all query parameters
+  const queryParams: Record<string, string> = {}
+  url.searchParams.forEach((value, key) => {
+    queryParams[key] = value
+  })
+
+  // Combine all parameters
+  const allParams = { ...queryParams, ...additionalParams }
+
+  // Sort keys to ensure consistent order
+  const sortedKeys = Object.keys(allParams).sort()
+
+  // Build the cache key
+  let cacheKey = path
+
+  if (sortedKeys.length > 0) {
+    cacheKey += "?"
+    cacheKey += sortedKeys.map((key) => `${key}=${allParams[key]}`).join("&")
+  }
+
+  return cacheKey
 }
 
 export async function logUsage(
@@ -95,21 +127,21 @@ export async function validateApiKey(request: Request) {
         .from("api_keys")
         .select("id, user_id, is_active")
         .eq("key", keyToValidate)
-        .single();
+        .single()
 
     if (error) {
-      console.error("Error during API key validation:", error);
+      console.error("Error during API key validation:", error)
       return {
         valid: false,
         error: ApiError.INVALID_API_KEY,
-      };
+      }
     }
 
     if (!keyData || !keyData.is_active) {
       return {
         valid: false,
         error: ApiError.INACTIVE_API_KEY,
-      };
+      }
     }
 
     // Update the last used date
