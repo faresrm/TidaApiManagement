@@ -110,7 +110,7 @@ export async function GET(request: Request, context: { params: { symbol: string 
             )
         }
 
-        await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "success")
+        await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "success", false)
 
         const successMessage = formatApiMessage(ApiResponse.DATA_RETRIEVAL_SUCCESS, {
             resourceType: RESOURCE_TYPE,

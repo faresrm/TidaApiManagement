@@ -108,7 +108,7 @@ export async function GET(request: Request) {
             )
         }
 
-        await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "success")
+        await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "success", false)
 
         const totalPages = Math.ceil((count || 0) / validatedLimit)
         const successMessage = formatApiMessage(ApiResponse.COLLECTION_DATA_RETRIEVAL_SUCCESS, {

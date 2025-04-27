@@ -82,6 +82,7 @@ export async function logUsage(
     keyId: string,
     endpoint: string,
     status: "success" | "error",
+    cached = false,
 ) {
   try {
     await supabase.from("usage_logs").insert({
@@ -90,6 +91,8 @@ export async function logUsage(
       endpoint,
       timestamp: new Date().toISOString(),
       status,
+      cached,
+      request_id: crypto.randomUUID(), // Add a unique ID for each log entry
     })
   } catch (logError) {
     console.error("Error recording usage log:", logError)
@@ -257,6 +260,68 @@ export async function checkRateLimit(userId: string) {
     return {
       allowed: false,
       error: ApiError.RATE_LIMIT_CHECK_ERROR,
+    }
+  }
+}
+
+/**
+ * Validates an API key from a request without modifying the last_used date
+ * This version is specifically for middleware usage
+ */
+export async function validateApiKeyForMiddleware(request: Request) {
+  try {
+    // Retrieve API key from the query parameter
+    const url = new URL(request.url)
+    const apiKey = url.searchParams.get("apikey")
+
+    // If the key is not in the parameters, check the Authorization header
+    let authHeader = null
+    if (!apiKey) {
+      authHeader = request.headers.get("authorization")
+
+      if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        return {
+          valid: false,
+          error: ApiError.MISSING_API_KEY,
+        }
+      }
+    }
+
+    // Extract the API key from the header if necessary
+    const keyToValidate = apiKey || authHeader!.split(" ")[1]
+
+    // Validate the API key in the database
+    const supabase = await createClient()
+
+    const { data: keyData, error } = await supabase
+        .from("api_keys")
+        .select("id, user_id, is_active")
+        .eq("key", keyToValidate)
+        .single()
+
+    if (error) {
+      return {
+        valid: false,
+        error: ApiError.INVALID_API_KEY,
+      }
+    }
+
+    if (!keyData || !keyData.is_active) {
+      return {
+        valid: false,
+        error: ApiError.INACTIVE_API_KEY,
+      }
+    }
+
+    return {
+      valid: true,
+      userId: keyData.user_id,
+      keyId: keyData.id,
+    }
+  } catch (error) {
+    return {
+      valid: false,
+      error: ApiError.API_KEY_VALIDATION_ERROR,
     }
   }
 }
