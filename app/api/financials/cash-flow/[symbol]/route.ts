@@ -5,11 +5,11 @@ import { validateApiKey, checkRateLimit, logUsage, ApiError, ApiResponse, format
 export const revalidate = 3600 // Revalidate data every hour
 
 // Define the resource type for this endpoint
-const RESOURCE_TYPE = "Form 13F filings"
+const RESOURCE_TYPE = "cash flow statements"
 
 export async function GET(request: Request, context: { params: { symbol: string } }) {
     const symbol = context.params.symbol.toUpperCase()
-    const endpoint = `/api/ownership/form13/${symbol}`
+    const endpoint = `/api/financials/cash-flow/${symbol}`
 
     try {
         const supabase = await createClient()
@@ -40,29 +40,29 @@ export async function GET(request: Request, context: { params: { symbol: string 
         const validatedPage = Math.max(page, 0)
         const offset = validatedPage * validatedLimit
         console.log(
-            `GET request received for Form 13F filings of ${symbol}. Limit: ${validatedLimit}, Page: ${validatedPage}, Offset: ${offset}`,
+            `GET request received for cash flow statement of ${symbol}. Limit: ${validatedLimit}, Page: ${validatedPage}, Offset: ${offset}`,
         )
 
-        // Retrieve Form 13F filings with pagination
+        // Retrieve data directly here
         const {
-            data: form13,
+            data: cashFlows,
             error,
             count,
         } = await supabase
-            .from("form13")
+            .from("cash_flow")
             .select(
                 `
         *
         `,
                 { count: "exact" },
             )
-            .eq("stocksymbol", symbol)
-            .order("datereported", { ascending: false })
+            .eq("symbol", symbol)
+            .order("date", { ascending: false })
             .range(offset, offset + validatedLimit - 1)
 
         if (error) {
             await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "error")
-            console.error("Error retrieving Form 13F filings:", error)
+            console.error("Error retrieving cash flow statements:", error)
             return NextResponse.json(
                 {
                     error: formatApiMessage(ApiResponse.DATA_RETRIEVAL_ERROR, { resourceType: RESOURCE_TYPE }),
@@ -71,7 +71,7 @@ export async function GET(request: Request, context: { params: { symbol: string 
             )
         }
 
-        if (!form13 || form13.length === 0) {
+        if (!cashFlows || cashFlows.length === 0) {
             await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "error")
             return NextResponse.json(
                 {
@@ -98,7 +98,7 @@ export async function GET(request: Request, context: { params: { symbol: string 
                 limit: validatedLimit,
                 page: validatedPage,
                 total_count: count || 0,
-                form13: form13,
+                cash_flows: cashFlows,
                 message: successMessage,
             },
             {
