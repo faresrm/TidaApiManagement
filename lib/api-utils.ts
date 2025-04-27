@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/server"
-
+//Enum Messages
 export enum ApiError {
   MISSING_API_KEY = "Missing API key. Use the query parameter '?apikey=YOUR_API_KEY'",
   INVALID_API_KEY = "Invalid API key",
