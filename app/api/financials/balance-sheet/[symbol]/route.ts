@@ -1,129 +1,131 @@
 import { createClient } from "@/lib/supabase/server"
 import { NextResponse } from "next/server"
-import {validateApiKey, checkRateLimit, logUsage} from "@/lib/api-utils"
+import { validateApiKey, checkRateLimit, logUsage, ApiError, ApiResponse, formatApiMessage } from "@/lib/api-utils"
+
+export const revalidate = 3600 // Revalidate data every hour
+
+// Define the resource type for this endpoint
+const RESOURCE_TYPE = "balance sheet statements"
 
 export async function GET(request: Request, context: { params: { symbol: string } }) {
     const symbol = context.params.symbol.toUpperCase()
-    console.log(`Requête GET /api/financials/balance-sheet/${symbol} reçue`)
     const endpoint = `/api/financials/balance-sheet/${symbol}`
 
     try {
-        // Valider la clé API
-        const apiKeyValidation = await validateApiKey(request)
-        console.log("Résultat de la validation de la clé API:", apiKeyValidation)
-
-        if (!apiKeyValidation.valid) {
-            return NextResponse.json({ error: apiKeyValidation.error }, { status: 401 })
-        }
-
-        // Vérifier les limites de taux
-        const rateLimitCheck = await checkRateLimit(apiKeyValidation.userId)
-        console.log("Résultat de la vérification des limites:", rateLimitCheck)
-
-        if (!rateLimitCheck.allowed) {
-            const supabase = await createClient()
-            await logUsage(
-                supabase,
-                apiKeyValidation.userId,
-                apiKeyValidation.keyId,
-                endpoint,
-                "error"
-            );
-
-            return NextResponse.json({ error: rateLimitCheck.error }, { status: 429 })
-        }
-
         const supabase = await createClient()
-        const url = new URL(request.url)
 
-        // Paramètres de pagination
+        const apiKeyValidation = await validateApiKey(request)
+        if (!apiKeyValidation.valid) {
+            return NextResponse.json({ error: ApiError.INVALID_API_KEY }, { status: 401 })
+        }
+
+        const rateLimitCheck = await checkRateLimit(apiKeyValidation.userId)
+        if (!rateLimitCheck.allowed) {
+            await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "error")
+            return NextResponse.json(
+                {
+                    error: ApiError.RATE_LIMIT_REACHED.replace(
+                        "{limit}",
+                        rateLimitCheck.error!.split("(")[1].split(" ")[0], // Extract the limit value
+                    ),
+                },
+                { status: 429 },
+            )
+        }
+
+        const url = new URL(request.url)
         const limit = Number.parseInt(url.searchParams.get("limit") || "4")
         const page = Number.parseInt(url.searchParams.get("page") || "0")
-
-        // Validation des paramètres
-        const validatedLimit = Math.min(Math.max(limit, 1), 100) // Entre 1 et 100
-        const validatedPage = Math.max(page, 0) // Page >= 0
-
-        // Calcul de l'offset
+        const validatedLimit = Math.min(Math.max(limit, 1), 100)
+        const validatedPage = Math.max(page, 0)
         const offset = validatedPage * validatedLimit
-        const from = offset
-        const to = offset + validatedLimit - 1
+        console.log(
+            `GET request received for balance sheet statement of ${symbol}. Limit: ${validatedLimit}, Page: ${validatedPage}, Offset: ${offset}`,
+        )
 
-        // Récupérer les bilans financiers avec pagination
-        const { data: balanceSheets, error, count } = await supabase
+        // Retrieve data directly here
+        const {
+            data: balanceSheets,
+            error,
+            count,
+        } = await supabase
             .from("balance_sheet_statements")
-            .select(`
-                *
-            `, { count: 'exact' })
+            .select(
+                `
+        *
+        `,
+                { count: "exact" },
+            )
             .eq("symbol", symbol)
             .order("date", { ascending: false })
-            .range(from, to)
+            .range(offset, offset + validatedLimit - 1)
 
         if (error) {
-            console.error("Erreur lors de la récupération des bilans financiers:", error)
-            await logUsage(
-                supabase,
-                apiKeyValidation.userId,
-                apiKeyValidation.keyId,
-                endpoint,
-                "error"
+            await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "error")
+            console.error("Error retrieving balance sheet statements:", error)
+            return NextResponse.json(
+                {
+                    error: formatApiMessage(ApiResponse.DATA_RETRIEVAL_ERROR, { resourceType: RESOURCE_TYPE }),
+                },
+                { status: 500 },
             )
-            throw error
         }
 
         if (!balanceSheets || balanceSheets.length === 0) {
-            await logUsage(
-                supabase,
-                apiKeyValidation.userId,
-                apiKeyValidation.keyId,
-                endpoint,
-                "error"
-            );
+            await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "error")
             return NextResponse.json(
-                { error: `Aucun bilan financier trouvé pour le symbole ${symbol}` },
-                { status: 404 }
+                {
+                    error: formatApiMessage(ApiResponse.NO_DATA_FOUND, { resourceType: RESOURCE_TYPE, symbol }),
+                },
+                { status: 404 },
             )
         }
 
-        // Record usage in usage_logs for success
-        await logUsage(
-            supabase,
-            apiKeyValidation.userId,
-            apiKeyValidation.keyId,
-            endpoint,
-            "success"
-        );
+        await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "success")
 
-
-        return NextResponse.json({
+        const totalPages = Math.ceil((count || 0) / validatedLimit)
+        const successMessage = formatApiMessage(ApiResponse.DATA_RETRIEVAL_SUCCESS, {
+            resourceType: RESOURCE_TYPE,
             symbol,
-            limit: validatedLimit,
-            page: validatedPage,
-            total_count: count || 0,
-            balance_sheets: balanceSheets,
+            page: validatedPage + 1,
+            totalPages,
+            totalCount: count || 0,
         })
-    } catch (error: any) {
-        console.error("Erreur complète:", error)
 
+        return NextResponse.json(
+            {
+                symbol,
+                limit: validatedLimit,
+                page: validatedPage,
+                total_count: count || 0,
+                balance_sheets: balanceSheets,
+                message: successMessage,
+            },
+            {
+                headers: {
+                    "Cache-Control": "public, max-age=60, stale-while-revalidate=3600",
+                },
+            },
+        )
+    } catch (error: any) {
+        console.error("Error processing the request:", error)
         try {
             const apiKeyValidation = await validateApiKey(request)
             if (apiKeyValidation.valid) {
                 const supabase = await createClient()
-                await logUsage(
-                    supabase,
-                    apiKeyValidation.userId,
-                    apiKeyValidation.keyId,
-                    endpoint,
-                    "error"
-                );
+                await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "error")
             }
         } catch (logError) {
-            console.error("Erreur lors de l'enregistrement de l'erreur:", logError)
+            console.error("Error logging the error:", logError)
         }
-
         return NextResponse.json(
-            { error: error.message || "Erreur lors de la récupération des bilans financiers" },
-            { status: 500 }
+            {
+                error: formatApiMessage(ApiResponse.PROCESSING_ERROR, {
+                    resourceType: RESOURCE_TYPE,
+                    details: error.message || "N/A",
+                }),
+            },
+            { status: 500 },
         )
     }
 }

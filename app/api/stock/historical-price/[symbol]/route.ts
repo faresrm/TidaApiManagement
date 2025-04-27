@@ -1,100 +1,61 @@
-import { createClient } from "@/lib/supabase/server";
-import { NextResponse } from "next/server";
-import { validateApiKey, checkRateLimit, logUsage} from "@/lib/api-utils";
+import { createClient } from "@/lib/supabase/server"
+import { NextResponse } from "next/server"
+import { validateApiKey, checkRateLimit, logUsage, ApiError, ApiResponse, formatApiMessage } from "@/lib/api-utils"
 
+export const revalidate = 3600 // Revalidate data every hour
 
+// Define the resource type for this endpoint
+const RESOURCE_TYPE = "historical prices"
 
-
-export async function GET(
-    request: Request,
-    context: { params: { symbol: string } }
-) {
-    const symbol = context.params.symbol.toUpperCase();
-    const endpoint = `/api/v1/stock/historical-price/${symbol}`;
-    console.log(`GET request received for ${endpoint}`);
+export async function GET(request: Request, context: { params: { symbol: string } }) {
+    const symbol = context.params.symbol.toUpperCase()
+    const endpoint = `/api/v1/stock/historical-price/${symbol}`
 
     try {
-        // Validate API Key
-        const apiKeyValidation = await validateApiKey(request);
-        //console.log("API Key validation result:", apiKeyValidation);
+        const supabase = await createClient()
 
+        const apiKeyValidation = await validateApiKey(request)
         if (!apiKeyValidation.valid) {
-            return NextResponse.json(
-                { error: apiKeyValidation.error },
-                { status: 401 }
-            );
+            return NextResponse.json({ error: ApiError.INVALID_API_KEY }, { status: 401 })
         }
 
-        // Check Rate Limits
-        const rateLimitCheck = await checkRateLimit(apiKeyValidation.userId);
-        console.log("Rate limit check result:", rateLimitCheck);
-
+        const rateLimitCheck = await checkRateLimit(apiKeyValidation.userId)
         if (!rateLimitCheck.allowed) {
-            const supabase = await createClient();
-            await logUsage(
-                supabase,
-                apiKeyValidation.userId,
-                apiKeyValidation.keyId,
-                endpoint,
-                "error"
-            );
+            await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "error")
             return NextResponse.json(
-                { error: rateLimitCheck.error },
-                { status: 429 }
-            );
+                {
+                    error: ApiError.RATE_LIMIT_REACHED.replace(
+                        "{limit}",
+                        rateLimitCheck.error!.split("(")[1].split(" ")[0], // Extract the limit value
+                    ),
+                },
+                { status: 429 },
+            )
         }
 
-        const supabase = await createClient();
-        const url = new URL(request.url);
+        const url = new URL(request.url)
 
         // Retrieve and validate date parameters
-        const fromDate = url.searchParams.get("from");
-        const toDate = url.searchParams.get("to");
+        const fromDate = url.searchParams.get("from")
+        const toDate = url.searchParams.get("to")
 
         // Date validation
         if (!fromDate || !toDate) {
-            await logUsage(
-                supabase,
-                apiKeyValidation.userId,
-                apiKeyValidation.keyId,
-                endpoint,
-                "error"
-            );
-            return NextResponse.json(
-                { error: "The 'from' and 'to' parameters are required" },
-                { status: 400 }
-            );
+            await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "error")
+            return NextResponse.json({ error: ApiResponse.MISSING_DATE_PARAMS }, { status: 400 })
         }
 
-        const fromDateObj = new Date(fromDate);
-        const toDateObj = new Date(toDate);
+        const fromDateObj = new Date(fromDate)
+        const toDateObj = new Date(toDate)
 
         if (isNaN(fromDateObj.getTime()) || isNaN(toDateObj.getTime())) {
-            await logUsage(
-                supabase,
-                apiKeyValidation.userId,
-                apiKeyValidation.keyId,
-                endpoint,
-                "error"
-            );
-            return NextResponse.json(
-                { error: "Invalid date format. Please use YYYY-MM-DD" },
-                { status: 400 }
-            );
+            await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "error")
+            return NextResponse.json({ error: ApiResponse.INVALID_DATE_FORMAT }, { status: 400 })
         }
 
         if (fromDateObj > toDateObj) {
-            await logUsage(
-                supabase,
-                apiKeyValidation.userId,
-                apiKeyValidation.keyId,
-                endpoint,
-                "error"
-            );
-            return NextResponse.json(
-                { error: "'from' date must be before the 'to' date" },
-                { status: 400 }
-            );
+            await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "error")
+            return NextResponse.json({ error: ApiResponse.INVALID_DATE_RANGE }, { status: 400 })
         }
 
         // Retrieve historical prices
@@ -116,66 +77,78 @@ export async function GET(
         vwap,
         label,
         change_over_time
-        `
+        `,
             )
             .eq("symbol", symbol)
             .gte("date", fromDate)
             .lte("date", toDate)
-            .order("date", { ascending: false });
+            .order("date", { ascending: false })
 
         if (error) {
-            console.error("Error retrieving historical prices:", error);
-            await logUsage(
-                supabase,
-                apiKeyValidation.userId,
-                apiKeyValidation.keyId,
-                endpoint,
-                "error"
-            );
-            throw error;
+            await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "error")
+            console.error("Error retrieving historical prices:", error)
+            return NextResponse.json(
+                {
+                    error: formatApiMessage(ApiResponse.DATA_RETRIEVAL_ERROR, { resourceType: RESOURCE_TYPE }),
+                },
+                { status: 500 },
+            )
         }
 
         if (!historicalPrices || historicalPrices.length === 0) {
+            await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "error")
             return NextResponse.json(
                 {
-                    error: `No historical prices found for the symbol ${symbol} within the specified period`,
+                    error: formatApiMessage(ApiResponse.NO_DATA_FOUND, { resourceType: RESOURCE_TYPE, symbol }),
                 },
-                { status: 404 }
-            );
+                { status: 404 },
+            )
         }
 
-        // Record usage in usage_logs for success
-        await logUsage(
-            supabase,
-            apiKeyValidation.userId,
-            apiKeyValidation.keyId,
-            endpoint,
-            "success"
-        );
+        await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "success")
 
-        return NextResponse.json(historicalPrices);
-    } catch (error: any) {
-        console.error("Full error:", error);
-
-        try {
-            const apiKeyValidation = await validateApiKey(request);
-            if (apiKeyValidation.valid) {
-                const supabase = await createClient();
-                await logUsage(
-                    supabase,
-                    apiKeyValidation.userId,
-                    apiKeyValidation.keyId,
-                    endpoint,
-                    "error"
-                );
-            }
-        } catch (logError) {
-            console.error("Error recording the error:", logError);
-        }
+        const successMessage = formatApiMessage(ApiResponse.DATA_RETRIEVAL_SUCCESS, {
+            resourceType: RESOURCE_TYPE,
+            symbol,
+            page: 1,
+            totalPages: 1,
+            totalCount: historicalPrices.length,
+        })
 
         return NextResponse.json(
-            { error: error.message || "Error retrieving historical prices" },
-            { status: 500 }
-        );
+            {
+                symbol,
+                from_date: fromDate,
+                to_date: toDate,
+                count: historicalPrices.length,
+                historical_prices: historicalPrices,
+                message: successMessage,
+            },
+            {
+                headers: {
+                    "Cache-Control": "public, max-age=60, stale-while-revalidate=3600",
+                },
+            },
+        )
+    } catch (error: any) {
+        console.error("Error processing the request:", error)
+        try {
+            const apiKeyValidation = await validateApiKey(request)
+            if (apiKeyValidation.valid) {
+                const supabase = await createClient()
+                await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "error")
+            }
+        } catch (logError) {
+            console.error("Error logging the error:", logError)
+        }
+        return NextResponse.json(
+            {
+                error: formatApiMessage(ApiResponse.PROCESSING_ERROR, {
+                    resourceType: RESOURCE_TYPE,
+                    details: error.message || "N/A",
+                }),
+            },
+            { status: 500 },
+        )
     }
 }

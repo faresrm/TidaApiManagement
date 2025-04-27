@@ -1,145 +1,122 @@
-import { createClient } from "@/lib/supabase/server";
-import { NextResponse } from "next/server";
-import {validateApiKey, checkRateLimit, logUsage} from "@/lib/api-utils";
+import { createClient } from "@/lib/supabase/server"
+import { NextResponse } from "next/server"
+import { validateApiKey, checkRateLimit, logUsage, ApiError } from "@/lib/api-utils"
+
+export const revalidate = 3600 // Revalidate data every hour
+
+export enum ApiResponse {
+    NO_DATA_FOUND = "No Form 13F filings found for the stock symbol '{symbol}'. Please verify the entered symbol.",
+    DATA_RETRIEVAL_SUCCESS = "Form 13F filings for symbol '{symbol}' retrieved successfully. Displaying page {page} of {totalPages} (Total: {totalCount} filings).",
+    DATA_RETRIEVAL_ERROR = "Error retrieving Form 13F filings",
+    PROCESSING_ERROR = "An error occurred... Details: {details}",
+}
 
 export async function GET(request: Request, context: { params: { symbol: string } }) {
-    const symbol = context.params.symbol.toUpperCase();
-    const endpoint = `/api/ownership/form13/${symbol}`;
-    console.log(`GET request received for Form 13F filings of ${symbol}.`);
+    const symbol = context.params.symbol.toUpperCase()
+    const endpoint = `/api/ownership/form13/${symbol}`
 
     try {
-        // Validate API Key
-        const apiKeyValidation = await validateApiKey(request);
-        //console.log("API Key validation result:", apiKeyValidation);
+        const supabase = await createClient()
 
+        const apiKeyValidation = await validateApiKey(request)
         if (!apiKeyValidation.valid) {
-
-            return NextResponse.json(
-                { error: `Invalid API Key. Please verify your access key.` },
-                { status: 401 }
-            );
+            return NextResponse.json({ error: ApiError.INVALID_API_KEY }, { status: 401 })
         }
 
-        // Check Rate Limits
-        const rateLimitCheck = await checkRateLimit(apiKeyValidation.userId);
-        console.log("Rate limit check result:", rateLimitCheck);
-
+        const rateLimitCheck = await checkRateLimit(apiKeyValidation.userId)
         if (!rateLimitCheck.allowed) {
-            const supabase = await createClient();
-            await logUsage(
-                supabase,
-                apiKeyValidation.userId,
-                apiKeyValidation.keyId,
-                endpoint,
-                "error"
-            );
+            await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "error")
             return NextResponse.json(
                 {
-                    error: `Rate limit exceeded. Please wait before making further requests. (Current limit: ${rateLimitCheck.limit}, Remaining attempts: ${rateLimitCheck.remaining})`,
+                    error: ApiError.RATE_LIMIT_REACHED.replace(
+                        "{limit}",
+                        rateLimitCheck.error!.split("(")[1].split(" ")[0], // Extract the limit value
+                    ),
                 },
-                { status: 429 }
-            );
+                { status: 429 },
+            )
         }
 
-        const supabase = await createClient();
-        const url = new URL(request.url);
-
-        // Pagination parameters
-        const limit = Number.parseInt(url.searchParams.get("limit") || "4");
-        const page = Number.parseInt(url.searchParams.get("page") || "0");
-
-        // Parameter validation
-        const validatedLimit = Math.min(Math.max(limit, 1), 100); // Between 1 and 100
-        const validatedPage = Math.max(page, 0); // Page >= 0
-
-        // Calculate offset
-        const offset = validatedPage * validatedLimit;
-        const from = offset;
-        const to = offset + validatedLimit - 1;
+        const url = new URL(request.url)
+        const limit = Number.parseInt(url.searchParams.get("limit") || "4")
+        const page = Number.parseInt(url.searchParams.get("page") || "0")
+        const validatedLimit = Math.min(Math.max(limit, 1), 100)
+        const validatedPage = Math.max(page, 0)
+        const offset = validatedPage * validatedLimit
+        console.log(
+            `GET request received for Form 13F filings of ${symbol}. Limit: ${validatedLimit}, Page: ${validatedPage}, Offset: ${offset}`,
+        )
 
         // Retrieve Form 13F filings with pagination
-        const { data: form13, error, count } = await supabase
+        const {
+            data: form13,
+            error,
+            count,
+        } = await supabase
             .from("form13")
             .select(
                 `
-                *
-            `,
-                { count: "exact" }
+        *
+        `,
+                { count: "exact" },
             )
             .eq("stocksymbol", symbol)
             .order("datereported", { ascending: false })
-            .range(from, to);
+            .range(offset, offset + validatedLimit - 1)
 
         if (error) {
-            console.error("Error retrieving Form 13F filings:", error);
-            await logUsage(
-                supabase,
-                apiKeyValidation.userId,
-                apiKeyValidation.keyId,
-                endpoint,
-                "error"
-            );
-            throw error;
+            await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "error")
+            console.error("Error retrieving Form 13F filings:", error)
+            return NextResponse.json({ error: ApiResponse.DATA_RETRIEVAL_ERROR }, { status: 500 })
         }
 
         if (!form13 || form13.length === 0) {
-            await logUsage(
-                supabase,
-                apiKeyValidation.userId,
-                apiKeyValidation.keyId,
-                endpoint,
-                "error"
-            );
+            await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "error")
             return NextResponse.json(
                 {
-                    error: `No Form 13F filings found for the stock symbol '${symbol}'. Please verify the entered symbol.`,
+                    error: ApiResponse.NO_DATA_FOUND.replace("{symbol}", symbol),
                 },
-                { status: 404 }
-            );
-
+                { status: 404 },
+            )
         }
 
-        // Record usage in usage_logs for success
-        await logUsage(
-            supabase,
-            apiKeyValidation.userId,
-            apiKeyValidation.keyId,
-            endpoint,
-            "success"
-        );
+        await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "success")
 
-
-        return NextResponse.json({
-            symbol,
-            limit: validatedLimit,
-            page: validatedPage,
-            total_count: count || 0,
-            form13: form13,
-            message: `Form 13F filings for symbol '${symbol}' retrieved successfully. Displaying page ${validatedPage + 1} of ${Math.ceil((count || 0) / validatedLimit)} (Total: ${count || 0} filings).`,
-        });
-    } catch (error: any) {
-        console.error("Error processing the request:", error);
-
-        try {
-            const apiKeyValidation = await validateApiKey(request);
-            if (apiKeyValidation.valid) {
-                const supabase = await createClient();
-                await logUsage(
-                    supabase,
-                    apiKeyValidation.userId,
-                    apiKeyValidation.keyId,
-                    endpoint,
-                    "error"
-                );
-
-            }
-        } catch (logError) {
-            console.error("Error logging the error:", logError);
-        }
+        const totalPages = Math.ceil((count || 0) / validatedLimit)
+        const successMessage = ApiResponse.DATA_RETRIEVAL_SUCCESS.replace("{symbol}", symbol)
+            .replace("{page}", (validatedPage + 1).toString())
+            .replace("{totalPages}", totalPages.toString())
+            .replace("{totalCount}", (count || 0).toString())
 
         return NextResponse.json(
-            { error: `An error occurred while retrieving the Form 13F filings for symbol '${symbol}'. Please try again later. Details: ${error.message || "N/A"}` },
-            { status: 500 }
-        );
+            {
+                symbol,
+                limit: validatedLimit,
+                page: validatedPage,
+                total_count: count || 0,
+                form13: form13,
+                message: successMessage,
+            },
+            {
+                headers: {
+                    "Cache-Control": "public, max-age=60, stale-while-revalidate=3600",
+                },
+            },
+        )
+    } catch (error: any) {
+        console.error("Error processing the request:", error)
+        try {
+            const apiKeyValidation = await validateApiKey(request)
+            if (apiKeyValidation.valid) {
+                const supabase = await createClient()
+                await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "error")
+            }
+        } catch (logError) {
+            console.error("Error logging the error:", logError)
+        }
+        return NextResponse.json(
+            { error: ApiResponse.PROCESSING_ERROR.replace("{details}", error.message || "N/A") },
+            { status: 500 },
+        )
     }
 }

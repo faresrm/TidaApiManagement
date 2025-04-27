@@ -1,44 +1,43 @@
 import { createClient } from "@/lib/supabase/server"
 import { NextResponse } from "next/server"
-import {validateApiKey, checkRateLimit, logUsage} from "@/lib/api-utils"
+import { validateApiKey, checkRateLimit, logUsage, ApiError, ApiResponse, formatApiMessage } from "@/lib/api-utils"
+
+export const revalidate = 3600 // Revalidate data every hour
+
+// Define the resource type for this endpoint
+const RESOURCE_TYPE = "company information"
 
 export async function GET(request: Request, { params }: { params: { symbol: string } }) {
     const symbol = params.symbol.toUpperCase()
-    console.log(`Requête GET /api/companies/${params.symbol} reçue`)
-    const endpoint = `/api/v1/stock/historical-price/${symbol}`;
+    const endpoint = `/api/companies/${symbol}`
 
     try {
-        // Valider la clé API
-        const apiKeyValidation = await validateApiKey(request)
-        console.log("Résultat de la validation de la clé API:", apiKeyValidation)
-
-        if (!apiKeyValidation.valid) {
-            return NextResponse.json({ error: apiKeyValidation.error }, { status: 401 })
-        }
-
-        // Vérifier les limites de taux
-        const rateLimitCheck = await checkRateLimit(apiKeyValidation.userId)
-        console.log("Résultat de la vérification des limites:", rateLimitCheck)
-
-        if (!rateLimitCheck.allowed) {
-            const supabase = await createClient();
-            await logUsage(
-                supabase,
-                apiKeyValidation.userId,
-                apiKeyValidation.keyId,
-                endpoint,
-                "error"
-            );
-            return NextResponse.json({ error: rateLimitCheck.error }, { status: 429 })
-        }
-
         const supabase = await createClient()
-        const symbol = params.symbol.toUpperCase()
 
-        // Récupérer l'entreprise par symbole
+        const apiKeyValidation = await validateApiKey(request)
+        if (!apiKeyValidation.valid) {
+            return NextResponse.json({ error: ApiError.INVALID_API_KEY }, { status: 401 })
+        }
+
+        const rateLimitCheck = await checkRateLimit(apiKeyValidation.userId)
+        if (!rateLimitCheck.allowed) {
+            await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "error")
+            return NextResponse.json(
+                {
+                    error: ApiError.RATE_LIMIT_REACHED.replace(
+                        "{limit}",
+                        rateLimitCheck.error!.split("(")[1].split(" ")[0], // Extract the limit value
+                    ),
+                },
+                { status: 429 },
+            )
+        }
+
+        // Retrieve company by symbol
         const { data: company, error } = await supabase
             .from("companies")
-            .select(`
+            .select(
+                `
         symbol,
         price,
         market_cap,
@@ -84,59 +83,69 @@ export async function GET(request: Request, { params }: { params: { symbol: stri
         total_liabilities,
         revenue,
         type
-      `)
+      `,
+            )
             .eq("symbol", symbol)
             .single()
 
         if (error) {
+            await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "error")
             if (error.code === "PGRST116") {
-                return NextResponse.json({ error: `Entreprise avec le symbole ${symbol} non trouvée` }, { status: 404 })
+                return NextResponse.json(
+                    {
+                        error: formatApiMessage(ApiResponse.NO_DATA_FOUND, { resourceType: RESOURCE_TYPE, symbol }),
+                    },
+                    { status: 404 },
+                )
             }
-            console.error("Erreur lors de la récupération de l'entreprise:", error)
-            await logUsage(
-                supabase,
-                apiKeyValidation.userId,
-                apiKeyValidation.keyId,
-                endpoint,
-                "error"
-            );
-            throw error
+            console.error("Error retrieving company information:", error)
+            return NextResponse.json(
+                {
+                    error: formatApiMessage(ApiResponse.DATA_RETRIEVAL_ERROR, { resourceType: RESOURCE_TYPE }),
+                },
+                { status: 500 },
+            )
         }
 
-        // Enregistrer l'utilisation
-        // Record usage in usage_logs for success
-        await logUsage(
-            supabase,
-            apiKeyValidation.userId,
-            apiKeyValidation.keyId,
-            endpoint,
-            "success"
-        );
+        await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "success")
 
+        const successMessage = formatApiMessage(ApiResponse.DATA_RETRIEVAL_SUCCESS, {
+            resourceType: RESOURCE_TYPE,
+            symbol,
+            page: 1,
+            totalPages: 1,
+            totalCount: 1,
+        })
 
-        return NextResponse.json({ company })
+        return NextResponse.json(
+            {
+                company,
+                message: successMessage,
+            },
+            {
+                headers: {
+                    "Cache-Control": "public, max-age=60, stale-while-revalidate=3600",
+                },
+            },
+        )
     } catch (error: any) {
-        console.error("Erreur complète:", error)
-
-        // Essayer d'enregistrer l'erreur si possible
+        console.error("Error processing the request:", error)
         try {
             const apiKeyValidation = await validateApiKey(request)
             if (apiKeyValidation.valid) {
-                const supabase = await createClient();
-                await logUsage(
-                    supabase,
-                    apiKeyValidation.userId,
-                    apiKeyValidation.keyId,
-                    endpoint,
-                    "error"
-                );
+                const supabase = await createClient()
+                await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "error")
             }
         } catch (logError) {
-            console.error("Erreur lors de l'enregistrement de l'erreur:", logError)
+            console.error("Error logging the error:", logError)
         }
-
         return NextResponse.json(
-            { error: error.message || "Erreur lors de la récupération de l'entreprise" },
+            {
+                error: formatApiMessage(ApiResponse.PROCESSING_ERROR, {
+                    resourceType: RESOURCE_TYPE,
+                    details: error.message || "N/A",
+                }),
+            },
             { status: 500 },
         )
     }
