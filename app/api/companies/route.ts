@@ -2,12 +2,10 @@ import { createClient } from "@/lib/supabase/server"
 import { NextResponse } from "next/server"
 import { validateApiKey, checkRateLimit, logUsage, ApiError, ApiResponse, formatApiMessage } from "@/lib/api-utils"
 
+export const revalidate = 3600 // Revalidate data every hour
+
 // Define the resource type for this endpoint
 const RESOURCE_TYPE = "companies"
-
-// Use Next.js 13+ route segment config for better caching control
-export const dynamic = "force-dynamic" // Default is auto
-export const revalidate = 3600 // Revalidate every hour
 
 export async function GET(request: Request) {
     const endpoint = `/api/companies`
@@ -35,7 +33,7 @@ export async function GET(request: Request) {
         }
 
         const url = new URL(request.url)
-        const limit = Number.parseInt(url.searchParams.get("limit") || "20")
+        const limit = Number.parseInt(url.searchParams.get("limit") || "4")
         const page = Number.parseInt(url.searchParams.get("page") || "0")
         const validatedLimit = Math.min(Math.max(limit, 1), 100)
         const validatedPage = Math.max(page, 0)
@@ -45,9 +43,6 @@ export async function GET(request: Request) {
         const sector = url.searchParams.get("sector")
         const industry = url.searchParams.get("industry")
         const exchange = url.searchParams.get("exchange")
-
-        // Generate a cache tag based on the request parameters
-        const cacheTag = `companies-list-${validatedLimit}-${validatedPage}-${sector || ""}-${industry || ""}-${exchange || ""}`
 
         // Retrieve all companies with pagination
         let query = supabase
@@ -102,13 +97,13 @@ export async function GET(request: Request) {
             await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "error")
             return NextResponse.json(
                 {
-                    error: formatApiMessage(ApiResponse.NO_DATA_FOUND, { resourceType: RESOURCE_TYPE }),
+                    error: formatApiMessage(ApiResponse.NO_Company_DATA_FOUND, { resourceType: RESOURCE_TYPE }),
                 },
                 { status: 404 },
             )
         }
 
-        await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "success", false)
+        await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "success")
 
         const totalPages = Math.ceil((count || 0) / validatedLimit)
         const successMessage = formatApiMessage(ApiResponse.COLLECTION_DATA_RETRIEVAL_SUCCESS, {
@@ -118,24 +113,15 @@ export async function GET(request: Request) {
             totalCount: count || 0,
         })
 
-        // Create a response with improved cache headers
-        const response = NextResponse.json({
-            limit: validatedLimit,
-            page: validatedPage,
-            total_count: count || 0,
-            companies,
-            message: successMessage,
-            cached: true, // Add this to help with debugging
-            cache_tag: cacheTag, // Add this to help with debugging
-        })
-
-        // Set more specific cache headers
-        response.headers.set("Cache-Control", "public, max-age=3600, s-maxage=3600, stale-while-revalidate=86400")
-        response.headers.set("CDN-Cache-Control", "public, max-age=3600")
-        response.headers.set("Vercel-CDN-Cache-Control", "public, max-age=3600")
-        response.headers.set("X-Cache-Tag", cacheTag)
-
-        return response
+        return NextResponse.json(
+            {
+                limit: validatedLimit,
+                page: validatedPage,
+                total_count: count || 0,
+                companies,
+                message: successMessage,
+            },
+        )
     } catch (error: any) {
         console.error("Error processing the request:", error)
         try {

@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/server"
-
+//Enum Messages
 export enum ApiError {
   MISSING_API_KEY = "Missing API key. Use the query parameter '?apikey=YOUR_API_KEY'",
   INVALID_API_KEY = "Invalid API key",
@@ -22,6 +22,7 @@ export enum ApiResponse {
   DATA_RETRIEVAL_SUCCESS = "{resourceType} for symbol '{symbol}' retrieved successfully. Displaying page {page} of {totalPages} (Total: {totalCount} entries).",
   DATA_RETRIEVAL_ERROR = "Error retrieving {resourceType}",
   PROCESSING_ERROR = "An error occurred... Details: {details}",
+  NO_Company_DATA_FOUND = "No companies found.",
 
   // Date-related error messages
   MISSING_DATE_PARAMS = "The 'from' and 'to' parameters are required",
@@ -43,46 +44,12 @@ export function formatApiMessage(message: string, params: Record<string, string 
   return formattedMessage
 }
 
-/**
- * Creates a cache key for API responses based on the request parameters
- * @param request The incoming request
- * @param additionalParams Additional parameters to include in the cache key
- * @returns A string that can be used as a cache key
- */
-export function createCacheKey(request: Request, additionalParams: Record<string, string> = {}): string {
-  const url = new URL(request.url)
-  const path = url.pathname
-
-  // Get all query parameters
-  const queryParams: Record<string, string> = {}
-  url.searchParams.forEach((value, key) => {
-    queryParams[key] = value
-  })
-
-  // Combine all parameters
-  const allParams = { ...queryParams, ...additionalParams }
-
-  // Sort keys to ensure consistent order
-  const sortedKeys = Object.keys(allParams).sort()
-
-  // Build the cache key
-  let cacheKey = path
-
-  if (sortedKeys.length > 0) {
-    cacheKey += "?"
-    cacheKey += sortedKeys.map((key) => `${key}=${allParams[key]}`).join("&")
-  }
-
-  return cacheKey
-}
-
 export async function logUsage(
     supabase: any,
     userId: string,
     keyId: string,
     endpoint: string,
     status: "success" | "error",
-    cached = false,
 ) {
   try {
     await supabase.from("usage_logs").insert({
@@ -91,8 +58,6 @@ export async function logUsage(
       endpoint,
       timestamp: new Date().toISOString(),
       status,
-      cached,
-      request_id: crypto.randomUUID(), // Add a unique ID for each log entry
     })
   } catch (logError) {
     console.error("Error recording usage log:", logError)
@@ -130,21 +95,21 @@ export async function validateApiKey(request: Request) {
         .from("api_keys")
         .select("id, user_id, is_active")
         .eq("key", keyToValidate)
-        .single()
+        .single();
 
     if (error) {
-      console.error("Error during API key validation:", error)
+      console.error("Error during API key validation:", error);
       return {
         valid: false,
         error: ApiError.INVALID_API_KEY,
-      }
+      };
     }
 
     if (!keyData || !keyData.is_active) {
       return {
         valid: false,
         error: ApiError.INACTIVE_API_KEY,
-      }
+      };
     }
 
     // Update the last used date
@@ -260,68 +225,6 @@ export async function checkRateLimit(userId: string) {
     return {
       allowed: false,
       error: ApiError.RATE_LIMIT_CHECK_ERROR,
-    }
-  }
-}
-
-/**
- * Validates an API key from a request without modifying the last_used date
- * This version is specifically for middleware usage
- */
-export async function validateApiKeyForMiddleware(request: Request) {
-  try {
-    // Retrieve API key from the query parameter
-    const url = new URL(request.url)
-    const apiKey = url.searchParams.get("apikey")
-
-    // If the key is not in the parameters, check the Authorization header
-    let authHeader = null
-    if (!apiKey) {
-      authHeader = request.headers.get("authorization")
-
-      if (!authHeader || !authHeader.startsWith("Bearer ")) {
-        return {
-          valid: false,
-          error: ApiError.MISSING_API_KEY,
-        }
-      }
-    }
-
-    // Extract the API key from the header if necessary
-    const keyToValidate = apiKey || authHeader!.split(" ")[1]
-
-    // Validate the API key in the database
-    const supabase = await createClient()
-
-    const { data: keyData, error } = await supabase
-        .from("api_keys")
-        .select("id, user_id, is_active")
-        .eq("key", keyToValidate)
-        .single()
-
-    if (error) {
-      return {
-        valid: false,
-        error: ApiError.INVALID_API_KEY,
-      }
-    }
-
-    if (!keyData || !keyData.is_active) {
-      return {
-        valid: false,
-        error: ApiError.INACTIVE_API_KEY,
-      }
-    }
-
-    return {
-      valid: true,
-      userId: keyData.user_id,
-      keyId: keyData.id,
-    }
-  } catch (error) {
-    return {
-      valid: false,
-      error: ApiError.API_KEY_VALIDATION_ERROR,
     }
   }
 }

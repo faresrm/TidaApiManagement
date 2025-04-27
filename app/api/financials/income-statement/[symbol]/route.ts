@@ -2,12 +2,9 @@ import { createClient } from "@/lib/supabase/server"
 import { NextResponse } from "next/server"
 import { validateApiKey, checkRateLimit, logUsage, ApiError, ApiResponse, formatApiMessage } from "@/lib/api-utils"
 
+
 // Define the resource type for this endpoint
 const RESOURCE_TYPE = "income statements"
-
-// Use Next.js 13+ route segment config for better caching control
-export const dynamic = "force-dynamic" // Default is auto
-export const revalidate = 3600 // Revalidate every hour
 
 export async function GET(request: Request, context: { params: { symbol: string } }) {
     const symbol = context.params.symbol.toUpperCase()
@@ -41,10 +38,6 @@ export async function GET(request: Request, context: { params: { symbol: string 
         const validatedLimit = Math.min(Math.max(limit, 1), 100)
         const validatedPage = Math.max(page, 0)
         const offset = validatedPage * validatedLimit
-
-        // Generate a cache tag based on the request parameters
-        const cacheTag = `income-statement-${symbol}-${validatedLimit}-${validatedPage}`
-
         console.log(
             `GET request received for income statement of ${symbol}. Limit: ${validatedLimit}, Page: ${validatedPage}, Offset: ${offset}`,
         )
@@ -87,7 +80,7 @@ export async function GET(request: Request, context: { params: { symbol: string 
             )
         }
 
-        await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "success", false)
+        await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "success")
 
         const totalPages = Math.ceil((count || 0) / validatedLimit)
         const successMessage = formatApiMessage(ApiResponse.DATA_RETRIEVAL_SUCCESS, {
@@ -98,25 +91,17 @@ export async function GET(request: Request, context: { params: { symbol: string 
             totalCount: count || 0,
         })
 
-        // Create a response with improved cache headers
-        const response = NextResponse.json({
-            symbol,
-            limit: validatedLimit,
-            page: validatedPage,
-            total_count: count || 0,
-            income_statements: incomeStatements,
-            message: successMessage,
-            cached: true, // Add this to help with debugging
-            cache_tag: cacheTag, // Add this to help with debugging
-        })
+        return NextResponse.json(
+            {
+                symbol,
+                limit: validatedLimit,
+                page: validatedPage,
+                total_count: count || 0,
+                income_statements: incomeStatements,
+                message: successMessage,
+            },
 
-        // Set more specific cache headers
-        response.headers.set("Cache-Control", "public, max-age=3600, s-maxage=3600, stale-while-revalidate=86400")
-        response.headers.set("CDN-Cache-Control", "public, max-age=3600")
-        response.headers.set("Vercel-CDN-Cache-Control", "public, max-age=3600")
-        response.headers.set("X-Cache-Tag", cacheTag)
-
-        return response
+        )
     } catch (error: any) {
         console.error("Error processing the request:", error)
         try {

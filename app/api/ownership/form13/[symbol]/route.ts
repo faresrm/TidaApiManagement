@@ -1,13 +1,7 @@
 import { createClient } from "@/lib/supabase/server"
 import { NextResponse } from "next/server"
-import { validateApiKey, checkRateLimit, logUsage, ApiError, ApiResponse, formatApiMessage } from "@/lib/api-utils"
+import {validateApiKey, checkRateLimit, logUsage, ApiError, ApiResponse} from "@/lib/api-utils"
 
-// Define the resource type for this endpoint
-const RESOURCE_TYPE = "Form 13F filings"
-
-// Use Next.js 13+ route segment config for better caching control
-export const dynamic = "force-dynamic" // Default is auto
-export const revalidate = 3600 // Revalidate every hour
 
 export async function GET(request: Request, context: { params: { symbol: string } }) {
     const symbol = context.params.symbol.toUpperCase()
@@ -41,10 +35,6 @@ export async function GET(request: Request, context: { params: { symbol: string 
         const validatedLimit = Math.min(Math.max(limit, 1), 100)
         const validatedPage = Math.max(page, 0)
         const offset = validatedPage * validatedLimit
-
-        // Generate a cache tag based on the request parameters
-        const cacheTag = `form13-${symbol}-${validatedLimit}-${validatedPage}`
-
         console.log(
             `GET request received for Form 13F filings of ${symbol}. Limit: ${validatedLimit}, Page: ${validatedPage}, Offset: ${offset}`,
         )
@@ -69,54 +59,38 @@ export async function GET(request: Request, context: { params: { symbol: string 
         if (error) {
             await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "error")
             console.error("Error retrieving Form 13F filings:", error)
-            return NextResponse.json(
-                {
-                    error: formatApiMessage(ApiResponse.DATA_RETRIEVAL_ERROR, { resourceType: RESOURCE_TYPE }),
-                },
-                { status: 500 },
-            )
+            return NextResponse.json({ error: ApiResponse.DATA_RETRIEVAL_ERROR }, { status: 500 })
         }
 
         if (!form13 || form13.length === 0) {
             await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "error")
             return NextResponse.json(
                 {
-                    error: formatApiMessage(ApiResponse.NO_DATA_FOUND, { resourceType: RESOURCE_TYPE, symbol }),
+                    error: ApiResponse.NO_DATA_FOUND.replace("{symbol}", symbol),
                 },
                 { status: 404 },
             )
         }
 
-        await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "success", false)
+        await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "success")
 
         const totalPages = Math.ceil((count || 0) / validatedLimit)
-        const successMessage = formatApiMessage(ApiResponse.DATA_RETRIEVAL_SUCCESS, {
-            resourceType: RESOURCE_TYPE,
-            symbol,
-            page: validatedPage + 1,
-            totalPages,
-            totalCount: count || 0,
-        })
+        const successMessage = ApiResponse.DATA_RETRIEVAL_SUCCESS.replace("{symbol}", symbol)
+            .replace("{page}", (validatedPage + 1).toString())
+            .replace("{totalPages}", totalPages.toString())
+            .replace("{totalCount}", (count || 0).toString())
 
-        // Create a response with improved cache headers
-        const response = NextResponse.json({
-            symbol,
-            limit: validatedLimit,
-            page: validatedPage,
-            total_count: count || 0,
-            form13: form13,
-            message: successMessage,
-            cached: true, // Add this to help with debugging
-            cache_tag: cacheTag, // Add this to help with debugging
-        })
+        return NextResponse.json(
+            {
+                symbol,
+                limit: validatedLimit,
+                page: validatedPage,
+                total_count: count || 0,
+                form13: form13,
+                message: successMessage,
+            },
 
-        // Set more specific cache headers
-        response.headers.set("Cache-Control", "public, max-age=3600, s-maxage=3600, stale-while-revalidate=86400")
-        response.headers.set("CDN-Cache-Control", "public, max-age=3600")
-        response.headers.set("Vercel-CDN-Cache-Control", "public, max-age=3600")
-        response.headers.set("X-Cache-Tag", cacheTag)
-
-        return response
+        )
     } catch (error: any) {
         console.error("Error processing the request:", error)
         try {
@@ -129,12 +103,7 @@ export async function GET(request: Request, context: { params: { symbol: string 
             console.error("Error logging the error:", logError)
         }
         return NextResponse.json(
-            {
-                error: formatApiMessage(ApiResponse.PROCESSING_ERROR, {
-                    resourceType: RESOURCE_TYPE,
-                    details: error.message || "N/A",
-                }),
-            },
+            { error: ApiResponse.PROCESSING_ERROR.replace("{details}", error.message || "N/A") },
             { status: 500 },
         )
     }

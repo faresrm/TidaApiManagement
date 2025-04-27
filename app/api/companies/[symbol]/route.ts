@@ -2,12 +2,9 @@ import { createClient } from "@/lib/supabase/server"
 import { NextResponse } from "next/server"
 import { validateApiKey, checkRateLimit, logUsage, ApiError, ApiResponse, formatApiMessage } from "@/lib/api-utils"
 
+
 // Define the resource type for this endpoint
 const RESOURCE_TYPE = "company information"
-
-// Use Next.js 13+ route segment config for better caching control
-export const dynamic = "force-dynamic" // Default is auto
-export const revalidate = 3600 // Revalidate every hour
 
 export async function GET(request: Request, { params }: { params: { symbol: string } }) {
     const symbol = params.symbol.toUpperCase()
@@ -34,9 +31,6 @@ export async function GET(request: Request, { params }: { params: { symbol: stri
                 { status: 429 },
             )
         }
-
-        // Generate a cache tag based on the request parameters
-        const cacheTag = `company-${symbol}`
 
         // Retrieve company by symbol
         const { data: company, error } = await supabase
@@ -112,7 +106,7 @@ export async function GET(request: Request, { params }: { params: { symbol: stri
             )
         }
 
-        await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "success", false)
+        await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "success")
 
         const successMessage = formatApiMessage(ApiResponse.DATA_RETRIEVAL_SUCCESS, {
             resourceType: RESOURCE_TYPE,
@@ -122,21 +116,12 @@ export async function GET(request: Request, { params }: { params: { symbol: stri
             totalCount: 1,
         })
 
-        // Create a response with improved cache headers
-        const response = NextResponse.json({
-            company,
-            message: successMessage,
-            cached: true, // Add this to help with debugging
-            cache_tag: cacheTag, // Add this to help with debugging
-        })
-
-        // Set more specific cache headers
-        response.headers.set("Cache-Control", "public, max-age=3600, s-maxage=3600, stale-while-revalidate=86400")
-        response.headers.set("CDN-Cache-Control", "public, max-age=3600")
-        response.headers.set("Vercel-CDN-Cache-Control", "public, max-age=3600")
-        response.headers.set("X-Cache-Tag", cacheTag)
-
-        return response
+        return NextResponse.json(
+            {
+                company,
+                message: successMessage,
+            },
+        )
     } catch (error: any) {
         console.error("Error processing the request:", error)
         try {
