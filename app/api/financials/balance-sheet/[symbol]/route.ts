@@ -2,7 +2,8 @@ import { createClient } from "@/lib/supabase/server"
 import { NextResponse } from "next/server"
 import { validateApiKey, checkRateLimit, logUsage, ApiError, ApiResponse, formatApiMessage } from "@/lib/api-utils"
 
-
+export const revalidate = 3600
+export const runtime = 'edge'
 // Define the resource type for this endpoint
 const RESOURCE_TYPE = "balance sheet statements"
 
