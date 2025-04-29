@@ -14,9 +14,9 @@ const availableEndpoints = [
         response: JSON.stringify(
             [
                 {
-                    stockSymbol: "AAPL",
+                    symbol: "AAPL",
                     cik: 123456,
-                    dateReported: "2024-12-31",
+                    date_eported: "2024-12-31",
                     issuer: "Apple Inc.",
                     filingDate: "2025-01-15",
                     cusip: "037833100",

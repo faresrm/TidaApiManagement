@@ -10,6 +10,7 @@ export default async function DashboardPage() {
   // Initialize default values
   let apiKeysCount = 0;
   let usageLogs = [];
+    let dailycallCount = 0;
   let subscriptionData = {
     plans: {
       name: "Free",
@@ -28,13 +29,23 @@ export default async function DashboardPage() {
 
     if (userId) {
       // Fetch usage logs
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
       const { data: logsData } = await supabase
           .from("usage_logs")
           .select("*")
           .eq("user_id", userId)
-          .order("timestamp", { ascending: false });
-
+          .order("timestamp", { ascending: false })
+          .range(0, 9999); // <--- Ajoute cette ligne pour dépasser les 1000
+      const { count: dailyCount, error: countError } = await supabase
+          .from("usage_logs")
+          .select("*", { count: "exact", head: true })
+          .eq("user_id", userId)
+          .gte("timestamp", today.toISOString())
+      dailycallCount = dailyCount || 0;
       usageLogs = logsData || [];
+
+        console.log("Usage logs:", usageLogs.length);
 
       // Fetch active subscription
       const { data: subscriptions } = await supabase
@@ -78,7 +89,8 @@ export default async function DashboardPage() {
     // Continue with default values on error
   }
 
-  return (
+
+    return (
       <div className="flex-1 space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-3xl font-bold tracking-tight">Dashboard</h2>
@@ -97,11 +109,8 @@ export default async function DashboardPage() {
                 </CardHeader>
                 <CardContent>
                   <div className="text-2xl font-bold">
-                    {usageLogs.filter((log) => {
-                      const today = new Date();
-                      const logDate = new Date(log.timestamp);
-                      return logDate.toDateString() === today.toDateString();
-                    }).length || 0}
+                    {dailycallCount || 0}
+
                   </div>
                   <p className="text-xs text-muted-foreground">
                     Daily Limit: {subscriptionData?.plans?.daily_limit || 100}

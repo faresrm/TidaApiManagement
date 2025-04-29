@@ -52,8 +52,8 @@ export async function GET(request: Request, context: { params: { symbol: string 
         `,
                 { count: "exact" },
             )
-            .eq("stocksymbol", symbol)
-            .order("datereported", { ascending: false })
+            .eq("symbol", symbol)
+            .order("date_reported", { ascending: false })
             .range(offset, offset + validatedLimit - 1)
 
         if (error) {
