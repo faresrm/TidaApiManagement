@@ -65,9 +65,10 @@ export async function GET(request: Request) {
 
             // Si le cache est encore valide (moins de CACHE_DURATION secondes)
             if (cacheAge < CACHE_DURATION * 1000) {
-                console.log(`Utilisation du cache pour ${cacheKey}, âge: ${cacheAge / 1000}s`)
+                console.log(`Cache hit pour ${cacheKey}, âge: ${cacheAge / 1000}s, userId: ${apiKeyValidation.userId}`)
 
                 // Enregistrer l'utilisation (cache hit)
+                console.log(`Tentative d'enregistrement du log pour cache hit, userId: ${apiKeyValidation.userId}, keyId: ${apiKeyValidation.keyId}`)
                 await logUsage(apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companies", "success")
 
                 // Retourner les données mises en cache avec les en-têtes de cache appropriés
@@ -77,7 +78,7 @@ export async function GET(request: Request) {
                 response.headers.set("ETag", cachedEntry.etag)
                 return response
             } else {
-                // Supprimer l'entrée expirée
+                console.log(`Cache expiré pour ${cacheKey}, suppression`)
                 MEMORY_CACHE.delete(cacheKey)
             }
         }
@@ -85,10 +86,10 @@ export async function GET(request: Request) {
         // Vérifier si le client a envoyé un en-tête If-None-Match (ETag)
         const ifNoneMatch = request.headers.get("If-None-Match")
         if (ifNoneMatch && MEMORY_CACHE.has(`etag:${ifNoneMatch}`)) {
-            // Le client a déjà la dernière version
-            console.log(`ETag hit for ${ifNoneMatch}`)
+            console.log(`ETag hit pour ${ifNoneMatch}, userId: ${apiKeyValidation.userId}`)
 
-            // Enregistrer l'utilisation (cache hit)
+            // Enregistrer l'utilisation (ETag hit)
+            console.log(`Tentative d'enregistrement du log pour ETag hit, userId: ${apiKeyValidation.userId}, keyId: ${apiKeyValidation.keyId}`)
             await logUsage(apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companies", "success")
 
             const response = new Response(null, { status: 304 }) // Not Modified
@@ -99,52 +100,52 @@ export async function GET(request: Request) {
 
         // Construire la requête de base
         let query = supabase.from("companies").select(`
-        symbol,
-        price,
-        market_cap,
-        beta,
-        last_dividend,
-        range,
-        change,
-        change_percentage,
-        volume,
-        average_volume,
-        company_name,
-        currency,
-        cik,
-        isin,
-        cusip,
-        exchange_full_name,
-        exchange,
-        industry,
-        website,
-        description,
-        ceo,
-        sector,
-        country,
-        full_time_employees,
-        phone,
-        address,
-        city,
-        state,
-        zip,
-        image,
-        ipo_date,
-        default_image,
-        is_etf,
-        is_actively_trading,
-        is_adr,
-        is_fund,
-        altman_z_score,
-        piotroski_score,
-        working_capital,
-        total_assets,
-        retained_earnings,
-        ebit,
-        total_liabilities,
-        revenue,
-        type
-      `)
+            symbol,
+            price,
+            market_cap,
+            beta,
+            last_dividend,
+            range,
+            change,
+            change_percentage,
+            volume,
+            average_volume,
+            company_name,
+            currency,
+            cik,
+            isin,
+            cusip,
+            exchange_full_name,
+            exchange,
+            industry,
+            website,
+            description,
+            ceo,
+            sector,
+            country,
+            full_time_employees,
+            phone,
+            address,
+            city,
+            state,
+            zip,
+            image,
+            ipo_date,
+            default_image,
+            is_etf,
+            is_actively_trading,
+            is_adr,
+            is_fund,
+            altman_z_score,
+            piotroski_score,
+            working_capital,
+            total_assets,
+            retained_earnings,
+            ebit,
+            total_liabilities,
+            revenue,
+            type
+        `)
 
         // Ajouter les filtres si présents
         if (symbol) {
@@ -175,14 +176,12 @@ export async function GET(request: Request) {
         query = query.range(offset, offset + validatedLimit - 1)
 
         // Exécuter la requête
+        console.log(`Exécution de la requête Supabase pour cache miss, userId: ${apiKeyValidation.userId}`)
         const { data: companies, error, count } = await query
 
         if (error) {
             console.error("Erreur lors de la récupération des entreprises:", error)
-
-            // Enregistrer l'erreur
             await logUsage(apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companies", "error")
-
             throw error
         }
 
@@ -219,25 +218,25 @@ export async function GET(request: Request) {
         // Stocker également par ETag pour les requêtes If-None-Match
         MEMORY_CACHE.set(`etag:${etag}`, cacheKey)
 
-        // Nettoyer le cache si nécessaire (simple gestion de la taille)
+        // Nettoyer le cache si nécessaire
         if (MEMORY_CACHE.size > 1000) {
-            // Supprimer les entrées les plus anciennes
+            console.log(`Nettoyage du cache, taille actuelle: ${MEMORY_CACHE.size}`)
             const entries = [...MEMORY_CACHE.entries()].sort((a, b) => {
                 if (!a[1].timestamp) return -1
                 if (!b[1].timestamp) return 1
                 return a[1].timestamp - b[1].timestamp
             })
 
-            // Supprimer les 200 entrées les plus anciennes
             for (let i = 0; i < 200 && i < entries.length; i++) {
                 MEMORY_CACHE.delete(entries[i][0])
             }
         }
 
-        // Enregistrer l'utilisation
+        // Enregistrer l'utilisation (cache miss)
+        console.log(`Tentative d'enregistrement du log pour cache miss, userId: ${apiKeyValidation.userId}, keyId: ${apiKeyValidation.keyId}`)
         await logUsage(apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companies", "success")
 
-        // Retourner les résultats avec les métadonnées de pagination et les en-têtes de cache
+        // Retourner les résultats
         const response = NextResponse.json(responseData)
         response.headers.set("X-Cache", "MISS")
         response.headers.set("Cache-Control", `public, max-age=${CACHE_DURATION}`)
@@ -251,6 +250,7 @@ export async function GET(request: Request) {
         try {
             const apiKeyValidation = await validateApiKey(request)
             if (apiKeyValidation.valid) {
+                console.log(`Tentative d'enregistrement du log pour erreur, userId: ${apiKeyValidation.userId}, keyId: ${apiKeyValidation.keyId}`)
                 await logUsage(apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companies", "error")
             }
         } catch (logError) {

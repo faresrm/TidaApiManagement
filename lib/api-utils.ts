@@ -18,30 +18,23 @@ export enum ApiError {
 
 // Centralized API response messages
 export enum ApiResponse {
-  // Generic error messages
   NO_DATA_FOUND = "No {resourceType} found for the stock symbol '{symbol}'. Please verify the entered symbol.",
   DATA_RETRIEVAL_SUCCESS = "{resourceType} for symbol '{symbol}' retrieved successfully. Displaying page {page} of {totalPages} (Total: {totalCount} entries).",
   DATA_RETRIEVAL_ERROR = "Error retrieving {resourceType}",
   PROCESSING_ERROR = "An error occurred... Details: {details}",
   NO_Company_DATA_FOUND = "No companies found.",
-
-  // Date-related error messages
   MISSING_DATE_PARAMS = "The 'from' and 'to' parameters are required",
   INVALID_DATE_FORMAT = "Invalid date format. Please use YYYY-MM-DD",
   INVALID_DATE_RANGE = "'from' date must be before the 'to' date",
-
-  // Collection endpoints
   COLLECTION_DATA_RETRIEVAL_SUCCESS = "{resourceType} retrieved successfully. Displaying page {page} of {totalPages} (Total: {totalCount} entries).",
 }
 
 // Helper function to format API response messages
 export function formatApiMessage(message: string, params: Record<string, string | number>): string {
   let formattedMessage = message
-
   for (const [key, value] of Object.entries(params)) {
     formattedMessage = formattedMessage.replace(`{${key}}`, String(value))
   }
-
   return formattedMessage
 }
 
@@ -50,6 +43,48 @@ const isValidUUID = (str: string): boolean => {
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
   return uuidRegex.test(str);
 };
+
+// Fonction pour insérer un log avec tentative de réessai
+async function insertUsageLog(
+    supabase: any,
+    userId: string,
+    keyId: string,
+    endpoint: string,
+    status: "success" | "error",
+    retries: number = 2
+): Promise<void> {
+  try {
+    const { error } = await supabase.from("usage_logs").insert({
+      user_id: userId,
+      api_key_id: keyId,
+      endpoint,
+      timestamp: new Date().toISOString(),
+      status,
+    });
+
+    if (error) {
+      console.error("Erreur lors de l'insertion du log:", {
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+        code: error.code,
+        userId,
+        keyId,
+        endpoint,
+        status,
+      });
+      throw error;
+    }
+    console.log(`Log inséré avec succès pour userId: ${userId}, endpoint: ${endpoint}, status: ${status}`);
+  } catch (error) {
+    if (retries > 0) {
+      console.log(`Réessai de l'insertion du log, tentatives restantes: ${retries}`);
+      await new Promise(resolve => setTimeout(resolve, 1000)); // Attendre 1 seconde avant de réessayer
+      return insertUsageLog(supabase, userId, keyId, endpoint, status, retries - 1);
+    }
+    throw error;
+  }
+}
 
 export async function logUsage(
     userId: string,
@@ -66,27 +101,13 @@ export async function logUsage(
       throw new Error(`Invalid keyId: ${keyId}`);
     }
 
-    const supabase = await createClient();
-    const { error } = await supabase.from("usage_logs").insert({
-      user_id: userId,
-      api_key_id: keyId,
-      endpoint,
-      timestamp: new Date().toISOString(),
-      status,
-    });
+    console.log(`Début de l'enregistrement du log, userId: ${userId}, keyId: ${keyId}, endpoint: ${endpoint}, status: ${status}`);
 
-    if (error) {
-      console.error("Error inserting usage log:", {
-        message: error.message,
-        details: error.details,
-        hint: error.hint,
-        code: error.code,
-      });
-      throw error;
-    }
-  } catch (logError) {
-    console.error("Failed to record usage log:", {
-      error: logError,
+    const supabase = await createClient();
+    await insertUsageLog(supabase, userId, keyId, endpoint, status);
+  } catch (error) {
+    console.error("Échec de l'enregistrement du log:", {
+      error,
       userId,
       keyId,
       endpoint,
@@ -97,11 +118,8 @@ export async function logUsage(
 
 export async function validateApiKey(request: Request) {
   try {
-    // Retrieve API key from the query parameter
     const url = new URL(request.url)
     const apiKey = url.searchParams.get("apikey")
-
-    // If the key is not in the parameters, check the Authorization header
     let authHeader = null
     if (!apiKey) {
       authHeader = request.headers.get("authorization")
@@ -113,11 +131,9 @@ export async function validateApiKey(request: Request) {
       }
     }
 
-    // Extract the API key
     const keyToValidate = apiKey || authHeader!.split(" ")[1]
-    console.log("API Key to validate:", keyToValidate)
+    console.log("Clé API à valider:", keyToValidate)
 
-    // Validate the API key in the database
     const supabase = await createClient()
     const { data: keyData, error } = await supabase
         .from("api_keys")
@@ -126,7 +142,7 @@ export async function validateApiKey(request: Request) {
         .single()
 
     if (error) {
-      console.error("Error during API key validation:", error)
+      console.error("Erreur lors de la validation de la clé API:", error)
       return {
         valid: false,
         error: ApiError.INVALID_API_KEY,
@@ -140,16 +156,15 @@ export async function validateApiKey(request: Request) {
       }
     }
 
-    // Valider que user_id et id sont des UUID
+    // Valider les UUID
     if (!isValidUUID(keyData.user_id) || !isValidUUID(keyData.id)) {
-      console.error("Invalid UUID in keyData:", keyData)
+      console.error("UUID invalide dans keyData:", keyData)
       return {
         valid: false,
         error: ApiError.INVALID_API_KEY,
       }
     }
 
-    // Update the last used date
     await supabase.from("api_keys").update({ last_used: new Date().toISOString() }).eq("id", keyData.id)
 
     return {
@@ -158,7 +173,7 @@ export async function validateApiKey(request: Request) {
       keyId: keyData.id,
     }
   } catch (error) {
-    console.error("Error during API key validation:", error)
+    console.error("Erreur lors de la validation de la clé API:", error)
     return {
       valid: false,
       error: ApiError.API_KEY_VALIDATION_ERROR,
@@ -169,7 +184,7 @@ export async function validateApiKey(request: Request) {
 export async function checkRateLimit(userId: string) {
   try {
     if (!isValidUUID(userId)) {
-      console.error("Invalid userId in checkRateLimit:", userId)
+      console.error("userId invalide dans checkRateLimit:", userId)
       return {
         allowed: false,
         error: ApiError.RATE_LIMIT_CHECK_ERROR,
@@ -178,9 +193,8 @@ export async function checkRateLimit(userId: string) {
 
     const today = new Date()
     const supabase = await createClient()
-    console.log("Checking rate limits for user:", userId)
+    console.log("Vérification des limites de taux pour userId:", userId)
 
-    // Retrieve the active subscription
     const { data: subscriptions, error: subscriptionError } = await supabase
         .from("subscriptions")
         .select("*")
@@ -189,32 +203,28 @@ export async function checkRateLimit(userId: string) {
         .order("created_at", { ascending: false })
 
     if (subscriptionError) {
-      console.error("Error fetching subscription:", subscriptionError)
+      console.error("Erreur lors de la récupération de l'abonnement:", subscriptionError)
     }
 
-    // Use the first active subscription or the default free plan
     const subscription = subscriptions && subscriptions.length > 0 ? subscriptions[0] : null
-    console.log("Current subscription:", subscription)
+    console.log("Abonnement actuel:", subscription)
 
-    // Retrieve the plan details
     const { data: planData, error: planError } = await supabase
         .from("plans")
         .select("*")
         .eq("id", subscription?.plan_id || "free")
         .single()
 
-    console.log("Current plan:", planData)
+    console.log("Plan actuel:", planData)
     if (planError) {
-      console.error("Error fetching plan:", planError)
+      console.error("Erreur lors de la récupération du plan:", planError)
     }
 
-    // Default values for the free plan
     const plan = planData || {
       daily_limit: 500,
-      request_interval: 12, // 5 requests per minute (60/5 = 12 seconds)
+      request_interval: 12,
     }
 
-    // Check the number of calls today
     today.setHours(0, 0, 0, 0)
     const { count: dailyCount, error: countError } = await supabase
         .from("usage_logs")
@@ -223,10 +233,10 @@ export async function checkRateLimit(userId: string) {
         .gte("timestamp", today.toISOString())
 
     if (countError) {
-      console.error("Error counting daily calls:", countError)
+      console.error("Erreur lors du comptage des appels quotidiens:", countError)
     }
 
-    console.log("Number of calls today:", dailyCount)
+    console.log("Nombre d'appels aujourd'hui:", dailyCount)
 
     if (dailyCount && dailyCount >= plan.daily_limit) {
       return {
@@ -235,7 +245,6 @@ export async function checkRateLimit(userId: string) {
       }
     }
 
-    // Check requests per minute
     if (plan.request_interval > 0) {
       const minuteAgo = new Date()
       minuteAgo.setMinutes(minuteAgo.getMinutes() - 1)
@@ -247,12 +256,11 @@ export async function checkRateLimit(userId: string) {
           .gte("timestamp", minuteAgo.toISOString())
 
       if (recentError) {
-        console.error("Error counting recent calls:", recentError)
+        console.error("Erreur lors du comptage des appels récents:", recentError)
       }
 
-      console.log("Number of calls in the last minute:", recentCount)
+      console.log("Nombre d'appels dans la dernière minute:", recentCount)
 
-      // Calculate the number of allowed requests per minute
       const requestsPerMinute = plan.request_interval > 0 ? Math.floor(60 / plan.request_interval) : 1000000
 
       if (recentCount && recentCount >= requestsPerMinute) {
@@ -267,7 +275,7 @@ export async function checkRateLimit(userId: string) {
       allowed: true,
     }
   } catch (error) {
-    console.error("Unexpected error during rate limit check:", error)
+    console.error("Erreur inattendue lors de la vérification des limites de taux:", error)
     return {
       allowed: false,
       error: ApiError.RATE_LIMIT_CHECK_ERROR,
