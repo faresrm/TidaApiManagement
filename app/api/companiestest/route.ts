@@ -6,6 +6,30 @@ import { validateApiKey, checkRateLimit } from "@/lib/api-utils"
 const MEMORY_CACHE = new Map()
 const CACHE_DURATION = 300 // 5 minutes en secondes
 
+// Fonction pour enregistrer l'utilisation de manière fiable dans Vercel
+async function recordUsageToSupabase(userId: string, keyId: string, endpoint: string, status: "success" | "error") {
+    try {
+        const supabase = await createClient()
+
+        // Utiliser une requête directe à la base de données
+        const { error } = await supabase.from("usage_logs").insert({
+            user_id: userId,
+            api_key_id: keyId,
+            endpoint,
+            timestamp: new Date().toISOString(),
+            status,
+        })
+
+        if (error) {
+            console.error("Erreur lors de l'enregistrement de l'utilisation:", error)
+        } else {
+            console.log(`Utilisation enregistrée avec succès: ${status}`)
+        }
+    } catch (error) {
+        console.error("Exception lors de l'enregistrement de l'utilisation:", error)
+    }
+}
+
 export async function GET(request: Request) {
     console.log("Requête GET /api/companies reçue")
     let cacheStatus = "MISS"
@@ -54,24 +78,6 @@ export async function GET(request: Request) {
         // Générer une clé de cache basée sur les paramètres de la requête
         const cacheKey = `companies:${validatedPage}:${validatedLimit}:${symbol || ""}:${search || ""}:${sector || ""}:${exchange || ""}:${minMarketCap || ""}:${maxMarketCap || ""}`
 
-        // Fonction pour enregistrer l'utilisation de manière synchrone
-        // Cette approche est plus fiable dans l'environnement serverless de Vercel
-        const recordUsage = async (status: "success" | "error") => {
-            try {
-                // Insérer directement dans la table usage_logs sans utiliser la fonction logUsage
-                await supabase.from("usage_logs").insert({
-                    user_id: apiKeyValidation.userId,
-                    api_key_id: apiKeyValidation.keyId,
-                    endpoint: "/api/companies",
-                    timestamp: new Date().toISOString(),
-                    status,
-                })
-                console.log(`Utilisation enregistrée avec succès: ${status}`)
-            } catch (error) {
-                console.error("Erreur lors de l'enregistrement de l'utilisation:", error)
-            }
-        }
-
         // Vérifier si nous avons une version mise en cache de cette requête
         if (MEMORY_CACHE.has(cacheKey)) {
             const cachedEntry = MEMORY_CACHE.get(cacheKey)
@@ -82,27 +88,46 @@ export async function GET(request: Request) {
                 console.log(`Utilisation du cache pour ${cacheKey}, âge: ${cacheAge / 1000}s`)
                 cacheStatus = "HIT"
 
-                // IMPORTANT: Enregistrer l'utilisation de manière synchrone
-                // Attendre explicitement que l'enregistrement soit terminé
-                await recordUsage("success")
+                // IMPORTANT: Enregistrer l'utilisation de manière fiable
+                // Utiliser une technique spécifique à Vercel pour garantir l'exécution
+                const logPromise = recordUsageToSupabase(
+                    apiKeyValidation.userId,
+                    apiKeyValidation.keyId,
+                    "/api/companies",
+                    "success",
+                )
+
+                // Technique spécifique à Vercel: utiliser un en-tête personnalisé pour forcer
+                // l'exécution complète de la fonction serverless
+                const headers = new Headers()
+                headers.set("X-Cache", "HIT")
+                headers.set("Cache-Control", `public, max-age=${CACHE_DURATION}, s-maxage=${CACHE_DURATION}`)
 
                 // Vérifier si le client a envoyé un en-tête If-None-Match (ETag)
                 const ifNoneMatch = request.headers.get("If-None-Match")
                 if (ifNoneMatch && ifNoneMatch === cachedEntry.etag) {
                     // Le client a déjà la dernière version
-                    const response = new Response(null, { status: 304 }) // Not Modified
-                    response.headers.set("Cache-Control", `public, max-age=${CACHE_DURATION}`)
-                    response.headers.set("ETag", ifNoneMatch)
-                    response.headers.set("X-Cache", "HIT-304")
-                    return response
+                    headers.set("ETag", ifNoneMatch)
+                    headers.set("X-Cache", "HIT-304")
+
+                    // Attendre explicitement que l'enregistrement soit terminé
+                    await logPromise
+
+                    return new Response(null, {
+                        status: 304,
+                        headers,
+                    })
                 }
 
-                // Retourner les données mises en cache avec les en-têtes de cache appropriés
-                const response = NextResponse.json(cachedEntry.data)
-                response.headers.set("X-Cache", "HIT")
-                response.headers.set("Cache-Control", `public, max-age=${CACHE_DURATION}`)
-                response.headers.set("ETag", cachedEntry.etag)
-                return response
+                // Attendre explicitement que l'enregistrement soit terminé
+                await logPromise
+
+                // Retourner les données mises en cache
+                headers.set("ETag", cachedEntry.etag)
+                return new Response(JSON.stringify(cachedEntry.data), {
+                    status: 200,
+                    headers: headers,
+                })
             } else {
                 // Supprimer l'entrée expirée
                 MEMORY_CACHE.delete(cacheKey)
@@ -193,7 +218,7 @@ export async function GET(request: Request) {
             console.error("Erreur lors de la récupération des entreprises:", error)
 
             // Enregistrer l'erreur
-            await recordUsage("error")
+            await recordUsageToSupabase(apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companies", "error")
 
             throw error
         }
@@ -243,31 +268,27 @@ export async function GET(request: Request) {
             }
         }
 
-        // IMPORTANT: Enregistrer l'utilisation (cache miss) de manière synchrone
+        // IMPORTANT: Enregistrer l'utilisation (cache miss)
         // Attendre explicitement que l'enregistrement soit terminé
-        await recordUsage("success")
+        await recordUsageToSupabase(apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companies", "success")
 
         // Retourner les résultats avec les métadonnées de pagination et les en-têtes de cache
-        const response = NextResponse.json(responseData)
-        response.headers.set("X-Cache", cacheStatus)
-        response.headers.set("Cache-Control", `public, max-age=${CACHE_DURATION}`)
-        response.headers.set("ETag", etag)
+        const headers = new Headers()
+        headers.set("X-Cache", cacheStatus)
+        headers.set("Cache-Control", `public, max-age=${CACHE_DURATION}, s-maxage=${CACHE_DURATION}`)
+        headers.set("ETag", etag)
 
-        return response
+        return new Response(JSON.stringify(responseData), {
+            status: 200,
+            headers: headers,
+        })
     } catch (error: any) {
         console.error("Erreur complète:", error)
 
         // Enregistrer l'erreur
         try {
-            if (apiKeyValidation.valid && supabase) {
-                // Insérer directement dans la table usage_logs
-                await supabase.from("usage_logs").insert({
-                    user_id: apiKeyValidation.userId,
-                    api_key_id: apiKeyValidation.keyId,
-                    endpoint: "/api/companies",
-                    timestamp: new Date().toISOString(),
-                    status: "error",
-                })
+            if (apiKeyValidation.valid) {
+                await recordUsageToSupabase(apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companies", "error")
             }
         } catch (logError) {
             console.error("Erreur lors de l'enregistrement de l'erreur:", logError)
