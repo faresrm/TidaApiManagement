@@ -45,22 +45,34 @@ export function formatApiMessage(message: string, params: Record<string, string 
 }
 
 export async function logUsage(
-    supabase: any,
     userId: string,
     keyId: string,
     endpoint: string,
     status: "success" | "error",
 ) {
   try {
-    await supabase.from("usage_logs").insert({
+    const supabase = await createClient(); // Créer une nouvelle instance
+    const { error } = await supabase.from("usage_logs").insert({
       user_id: userId,
       api_key_id: keyId,
       endpoint,
       timestamp: new Date().toISOString(),
       status,
-    })
+    });
+
+    if (error) {
+      console.error("Error inserting usage log:", error.message, error.details);
+      throw error; // Lancer l'erreur pour une meilleure visibilité
+    }
   } catch (logError) {
-    console.error("Error recording usage log:", logError)
+    console.error("Failed to record usage log:", {
+      error: logError,
+      userId,
+      keyId,
+      endpoint,
+      status,
+    });
+    // Vous pouvez ajouter une logique pour réessayer ou alerter ici
   }
 }
 
