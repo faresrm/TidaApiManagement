@@ -8,6 +8,7 @@ const CACHE_DURATION = 300 // 5 minutes en secondes
 
 export async function GET(request: Request) {
     console.log("Requête GET /api/companies reçue")
+    let cacheStatus = "MISS"
 
     try {
         // Valider la clé API
@@ -57,6 +58,22 @@ export async function GET(request: Request) {
             // Si le cache est encore valide (moins de CACHE_DURATION secondes)
             if (cacheAge < CACHE_DURATION * 1000) {
                 console.log(`Utilisation du cache pour ${cacheKey}, âge: ${cacheAge / 1000}s`)
+                cacheStatus = "HIT"
+
+                // Vérifier si le client a envoyé un en-tête If-None-Match (ETag)
+                const ifNoneMatch = request.headers.get("If-None-Match")
+                if (ifNoneMatch && ifNoneMatch === cachedEntry.etag) {
+                    // Le client a déjà la dernière version
+                    // Enregistrer l'utilisation (cache hit avec 304)
+                    await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companies", "success")
+
+                    const response = new Response(null, { status: 304 }) // Not Modified
+                    response.headers.set("Cache-Control", `public, max-age=${CACHE_DURATION}`)
+                    response.headers.set("ETag", ifNoneMatch)
+                    response.headers.set("X-Cache", "HIT-304")
+
+                    return response
+                }
 
                 // Enregistrer l'utilisation (cache hit)
                 await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companies", "success")
@@ -71,20 +88,6 @@ export async function GET(request: Request) {
                 // Supprimer l'entrée expirée
                 MEMORY_CACHE.delete(cacheKey)
             }
-        }
-
-        // Vérifier si le client a envoyé un en-tête If-None-Match (ETag)
-        const ifNoneMatch = request.headers.get("If-None-Match")
-        if (ifNoneMatch && MEMORY_CACHE.has(`etag:${ifNoneMatch}`)) {
-            // Le client a déjà la dernière version
-            const response = new Response(null, { status: 304 }) // Not Modified
-            response.headers.set("Cache-Control", `public, max-age=${CACHE_DURATION}`)
-            response.headers.set("ETag", ifNoneMatch)
-
-            // Enregistrer l'utilisation (cache hit)
-            await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companies", "success")
-
-            return response
         }
 
         // Construire la requête de base
@@ -206,9 +209,6 @@ export async function GET(request: Request) {
             etag: etag,
         })
 
-        // Stocker également par ETag pour les requêtes If-None-Match
-        MEMORY_CACHE.set(`etag:${etag}`, cacheKey)
-
         // Nettoyer le cache si nécessaire (simple gestion de la taille)
         if (MEMORY_CACHE.size > 1000) {
             // Supprimer les entrées les plus anciennes
@@ -224,12 +224,12 @@ export async function GET(request: Request) {
             }
         }
 
-        // Enregistrer l'utilisation
+        // Enregistrer l'utilisation (cache miss)
         await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companies", "success")
 
         // Retourner les résultats avec les métadonnées de pagination et les en-têtes de cache
         const response = NextResponse.json(responseData)
-        response.headers.set("X-Cache", "MISS")
+        response.headers.set("X-Cache", cacheStatus)
         response.headers.set("Cache-Control", `public, max-age=${CACHE_DURATION}`)
         response.headers.set("ETag", etag)
 
