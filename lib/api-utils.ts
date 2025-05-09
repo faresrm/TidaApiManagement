@@ -44,26 +44,6 @@ export function formatApiMessage(message: string, params: Record<string, string 
   return formattedMessage
 }
 
-// Logging asynchrone
-export async function logUsageAsync(
-    supabase: any,
-    userId: string,
-    keyId: string,
-    endpoint: string,
-    status: "success" | "error"
-) {
-  supabase.from("usage_logs").insert({
-    user_id: userId,
-    api_key_id: keyId,
-    endpoint,
-    timestamp: new Date().toISOString(),
-    status,
-  }).then(
-      () => console.log("Log recorded"),
-      (error) => console.error("Error logging:", error)
-  );
-}
-
 export async function logUsage(
     supabase: any,
     userId: string,
@@ -83,6 +63,7 @@ export async function logUsage(
     console.error("Error recording usage log:", logError)
   }
 }
+
 export async function validateApiKey(request: Request) {
   try {
     // Retrieve API key from the query parameter

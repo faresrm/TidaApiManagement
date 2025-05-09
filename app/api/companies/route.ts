@@ -1,15 +1,10 @@
 import { createClient } from "@/lib/supabase/server"
 import { NextResponse } from "next/server"
-import {
-    validateApiKey,
-    checkRateLimit,
-    logUsage,
-    ApiError,
-    ApiResponse,
-    formatApiMessage,
-} from "@/lib/api-utils"
-import { apiCache } from "@/lib/cache" // 🔥 Import du cache
+import { validateApiKey, checkRateLimit, logUsage, ApiError, ApiResponse, formatApiMessage } from "@/lib/api-utils"
 
+export const revalidate = 3600 // Revalidate data every hour
+
+// Define the resource type for this endpoint
 const RESOURCE_TYPE = "companies"
 
 export async function GET(request: Request) {
@@ -20,7 +15,7 @@ export async function GET(request: Request) {
 
         const apiKeyValidation = await validateApiKey(request)
         if (!apiKeyValidation.valid) {
-            return NextResponse.json({ error: apiKeyValidation.error }, { status: 401 })
+            return NextResponse.json({ error: ApiError.INVALID_API_KEY }, { status: 401 })
         }
 
         const rateLimitCheck = await checkRateLimit(apiKeyValidation.userId)
@@ -28,7 +23,10 @@ export async function GET(request: Request) {
             await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "error")
             return NextResponse.json(
                 {
-                    error: rateLimitCheck.error,
+                    error: ApiError.RATE_LIMIT_REACHED.replace(
+                        "{limit}",
+                        rateLimitCheck.error!.split("(")[1].split(" ")[0], // Extract the limit value
+                    ),
                 },
                 { status: 429 },
             )
@@ -41,49 +39,46 @@ export async function GET(request: Request) {
         const validatedPage = Math.max(page, 0)
         const offset = validatedPage * validatedLimit
 
+        // Optional filters
         const sector = url.searchParams.get("sector")
         const industry = url.searchParams.get("industry")
         const exchange = url.searchParams.get("exchange")
 
-        // 🔥 Génère une clé unique pour ce cache
-        const cacheKey = `companies_${sector || "all"}_${industry || "all"}_${exchange || "all"}_${validatedPage}_${validatedLimit}`
-        const cachedData = apiCache.get(cacheKey)
-
-        if (cachedData) {
-            // 🔥 Log même les requêtes en cache
-            await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "success")
-
-            return NextResponse.json({
-                ...cachedData,
-                message: `[CACHED] ${cachedData.message}`,
-            })
-        }
-
+        // Retrieve all companies with pagination
         let query = supabase
             .from("companies")
             .select(
                 `
-                symbol,
-                price,
-                market_cap,
-                beta,
-                company_name,
-                currency,
-                exchange,
-                industry,
-                sector,
-                country,
-                is_etf,
-                is_actively_trading
-                `,
+        symbol,
+        price,
+        market_cap,
+        beta,
+        company_name,
+        currency,
+        exchange,
+        industry,
+        sector,
+        country,
+        is_etf,
+        is_actively_trading
+        `,
                 { count: "exact" },
             )
             .order("market_cap", { ascending: false })
             .range(offset, offset + validatedLimit - 1)
 
-        if (sector) query = query.eq("sector", sector)
-        if (industry) query = query.eq("industry", industry)
-        if (exchange) query = query.eq("exchange", exchange)
+        // Apply filters if provided
+        if (sector) {
+            query = query.eq("sector", sector)
+        }
+
+        if (industry) {
+            query = query.eq("industry", industry)
+        }
+
+        if (exchange) {
+            query = query.eq("exchange", exchange)
+        }
 
         const { data: companies, error, count } = await query
 
@@ -118,18 +113,15 @@ export async function GET(request: Request) {
             totalCount: count || 0,
         })
 
-        const responsePayload = {
-            limit: validatedLimit,
-            page: validatedPage,
-            total_count: count || 0,
-            companies,
-            message: successMessage,
-        }
-
-        // 🔥 Met en cache pour les prochaines requêtes
-        apiCache.set(cacheKey, responsePayload)
-
-        return NextResponse.json(responsePayload)
+        return NextResponse.json(
+            {
+                limit: validatedLimit,
+                page: validatedPage,
+                total_count: count || 0,
+                companies,
+                message: successMessage,
+            },
+        )
     } catch (error: any) {
         console.error("Error processing the request:", error)
         try {
