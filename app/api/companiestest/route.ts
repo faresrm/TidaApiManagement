@@ -64,15 +64,11 @@ export async function GET(request: Request) {
                 console.log(`Utilisation du cache pour ${cacheKey}, âge: ${cacheAge / 1000}s`)
                 cacheStatus = "HIT"
 
-                // IMPORTANT: Enregistrer l'utilisation AVANT de retourner la réponse
-                console.log("Enregistrement de l'utilisation (cache hit)")
-                // Utiliser await pour s'assurer que l'enregistrement est terminé
-                await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companies", "success")
-
                 // Vérifier si le client a envoyé un en-tête If-None-Match (ETag)
                 const ifNoneMatch = request.headers.get("If-None-Match")
                 if (ifNoneMatch && ifNoneMatch === cachedEntry.etag) {
                     // Le client a déjà la dernière version
+                    await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companies", "success")
                     const response = new Response(null, { status: 304 }) // Not Modified
                     response.headers.set("Cache-Control", `public, max-age=${CACHE_DURATION}`)
                     response.headers.set("ETag", ifNoneMatch)
@@ -81,6 +77,7 @@ export async function GET(request: Request) {
                 }
 
                 // Retourner les données mises en cache avec les en-têtes de cache appropriés
+                await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companies", "success")
                 const response = NextResponse.json(cachedEntry.data)
                 response.headers.set("X-Cache", "HIT")
                 response.headers.set("Cache-Control", `public, max-age=${CACHE_DURATION}`)
@@ -174,10 +171,6 @@ export async function GET(request: Request) {
 
         if (error) {
             console.error("Erreur lors de la récupération des entreprises:", error)
-
-            // Enregistrer l'erreur
-            await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companies", "error")
-
             throw error
         }
 
@@ -226,8 +219,7 @@ export async function GET(request: Request) {
             }
         }
 
-        // IMPORTANT: Enregistrer l'utilisation (cache miss) AVANT de retourner la réponse
-        console.log("Enregistrement de l'utilisation (cache miss)")
+        // Enregistrer l'utilisation (cache miss) avant de retourner la réponse
         await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companies", "success")
 
         // Retourner les résultats avec les métadonnées de pagination et les en-têtes de cache
