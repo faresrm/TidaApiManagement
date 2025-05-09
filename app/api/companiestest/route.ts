@@ -9,10 +9,15 @@ const CACHE_DURATION = 300 // 5 minutes en secondes
 export async function GET(request: Request) {
     console.log("Requête GET /api/companies reçue")
     let cacheStatus = "MISS"
+    let supabase: any
+    let apiKeyValidation: any = { valid: false }
 
     try {
+        // Créer le client Supabase une seule fois
+        supabase = await createClient()
+
         // Valider la clé API
-        const apiKeyValidation = await validateApiKey(request)
+        apiKeyValidation = await validateApiKey(request)
         console.log("Résultat de la validation de la clé API:", apiKeyValidation)
 
         if (!apiKeyValidation.valid) {
@@ -27,7 +32,6 @@ export async function GET(request: Request) {
             return NextResponse.json({ error: rateLimitCheck.error }, { status: 429 })
         }
 
-        const supabase = await createClient()
         const url = new URL(request.url)
 
         // Paramètres de pagination
@@ -60,23 +64,21 @@ export async function GET(request: Request) {
                 console.log(`Utilisation du cache pour ${cacheKey}, âge: ${cacheAge / 1000}s`)
                 cacheStatus = "HIT"
 
+                // IMPORTANT: Enregistrer l'utilisation AVANT de retourner la réponse
+                console.log("Enregistrement de l'utilisation (cache hit)")
+                // Utiliser await pour s'assurer que l'enregistrement est terminé
+                await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companies", "success")
+
                 // Vérifier si le client a envoyé un en-tête If-None-Match (ETag)
                 const ifNoneMatch = request.headers.get("If-None-Match")
                 if (ifNoneMatch && ifNoneMatch === cachedEntry.etag) {
                     // Le client a déjà la dernière version
-                    // Enregistrer l'utilisation (cache hit avec 304)
-                    await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companies", "success")
-
                     const response = new Response(null, { status: 304 }) // Not Modified
                     response.headers.set("Cache-Control", `public, max-age=${CACHE_DURATION}`)
                     response.headers.set("ETag", ifNoneMatch)
                     response.headers.set("X-Cache", "HIT-304")
-
                     return response
                 }
-
-                // Enregistrer l'utilisation (cache hit)
-                await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companies", "success")
 
                 // Retourner les données mises en cache avec les en-têtes de cache appropriés
                 const response = NextResponse.json(cachedEntry.data)
@@ -224,7 +226,8 @@ export async function GET(request: Request) {
             }
         }
 
-        // Enregistrer l'utilisation (cache miss)
+        // IMPORTANT: Enregistrer l'utilisation (cache miss) AVANT de retourner la réponse
+        console.log("Enregistrement de l'utilisation (cache miss)")
         await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companies", "success")
 
         // Retourner les résultats avec les métadonnées de pagination et les en-têtes de cache
@@ -239,9 +242,7 @@ export async function GET(request: Request) {
 
         // Enregistrer l'erreur
         try {
-            const apiKeyValidation = await validateApiKey(request)
-            if (apiKeyValidation.valid) {
-                const supabase = await createClient()
+            if (apiKeyValidation.valid && supabase) {
                 await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companies", "error")
             }
         } catch (logError) {
