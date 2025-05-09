@@ -18,6 +18,15 @@ export async function GET(request: Request) {
             return NextResponse.json({ error: apiKeyValidation.error }, { status: 401 })
         }
 
+        // Vérifier que userId et keyId sont des chaînes valides
+        if (typeof apiKeyValidation.userId !== "string" || typeof apiKeyValidation.keyId !== "string") {
+            console.error("Invalid apiKeyValidation:", apiKeyValidation)
+            return NextResponse.json(
+                { error: "Internal server error: Invalid API key validation data" },
+                { status: 500 }
+            )
+        }
+
         // Vérifier les limites de taux
         const rateLimitCheck = await checkRateLimit(apiKeyValidation.userId)
         console.log("Résultat de la vérification des limites:", rateLimitCheck)
@@ -59,7 +68,7 @@ export async function GET(request: Request) {
                 console.log(`Utilisation du cache pour ${cacheKey}, âge: ${cacheAge / 1000}s`)
 
                 // Enregistrer l'utilisation (cache hit)
-                await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companies", "success")
+                await logUsage(apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companies", "success")
 
                 // Retourner les données mises en cache avec les en-têtes de cache appropriés
                 const response = NextResponse.json(cachedEntry.data)
@@ -77,13 +86,14 @@ export async function GET(request: Request) {
         const ifNoneMatch = request.headers.get("If-None-Match")
         if (ifNoneMatch && MEMORY_CACHE.has(`etag:${ifNoneMatch}`)) {
             // Le client a déjà la dernière version
+            console.log(`ETag hit for ${ifNoneMatch}`)
+
+            // Enregistrer l'utilisation (cache hit)
+            await logUsage(apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companies", "success")
+
             const response = new Response(null, { status: 304 }) // Not Modified
             response.headers.set("Cache-Control", `public, max-age=${CACHE_DURATION}`)
             response.headers.set("ETag", ifNoneMatch)
-
-            // Enregistrer l'utilisation (cache hit)
-            await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companies", "success")
-
             return response
         }
 
@@ -171,7 +181,7 @@ export async function GET(request: Request) {
             console.error("Erreur lors de la récupération des entreprises:", error)
 
             // Enregistrer l'erreur
-            await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companies", "error")
+            await logUsage(apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companies", "error")
 
             throw error
         }
@@ -225,7 +235,7 @@ export async function GET(request: Request) {
         }
 
         // Enregistrer l'utilisation
-        await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companies", "success")
+        await logUsage(apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companies", "success")
 
         // Retourner les résultats avec les métadonnées de pagination et les en-têtes de cache
         const response = NextResponse.json(responseData)
@@ -241,8 +251,7 @@ export async function GET(request: Request) {
         try {
             const apiKeyValidation = await validateApiKey(request)
             if (apiKeyValidation.valid) {
-                const supabase = await createClient()
-                await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companies", "error")
+                await logUsage(apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companies", "error")
             }
         } catch (logError) {
             console.error("Erreur lors de l'enregistrement de l'erreur:", logError)
