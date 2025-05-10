@@ -47,6 +47,17 @@ const isValidUUID = (str: string): boolean => {
 // Fonction utilitaire pour forcer un délai
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
+// Utiliser une connexion persistante pour les insertions de logs
+let supabaseClientCache: any = null
+
+// Fonction pour obtenir une connexion persistante à Supabase
+async function getPersistentSupabaseClient() {
+  if (!supabaseClientCache) {
+    supabaseClientCache = await createClient()
+  }
+  return supabaseClientCache
+}
+
 // Fonction pour insérer un log avec réessai
 async function insertUsageLog(
     supabase: any,
@@ -54,7 +65,7 @@ async function insertUsageLog(
     keyId: string,
     endpoint: string,
     status: "success" | "error",
-    retries = 2,
+    retries = 3,
 ): Promise<void> {
   console.log(
       `Début de l'insertion dans usage_logs - userId: ${userId}, keyId: ${keyId}, endpoint: ${endpoint}, status: ${status}`,
@@ -92,7 +103,7 @@ async function insertUsageLog(
   }
 }
 
-// Remplacer la fonction logUsage par cette version qui attend explicitement la fin de l'opération
+// Fonction pour insérer un log de manière synchrone
 export async function logUsage(
     supabaseClient: any,
     userId: string,
@@ -112,25 +123,12 @@ export async function logUsage(
       throw new Error(`Invalid keyId: ${keyId}`)
     }
 
-    // Utiliser le client Supabase fourni
-    console.log(`logUsage - Utilisation du client Supabase fourni pour userId: ${userId}`)
+    // Utiliser le client Supabase fourni ou obtenir une connexion persistante
+    const client = supabaseClient || (await getPersistentSupabaseClient())
+    console.log(`logUsage - Utilisation du client Supabase pour userId: ${userId}`)
 
-    // Insérer de manière synchrone et attendre explicitement la fin de l'opération
-    const { error } = await supabaseClient.from("usage_logs").insert({
-      user_id: userId,
-      api_key_id: keyId,
-      endpoint,
-      timestamp: new Date().toISOString(),
-      status,
-    })
-
-    if (error) {
-      console.error(`logUsage - Erreur d'insertion:`, error)
-      throw error
-    }
-
-    // Attendre un court délai pour s'assurer que l'insertion est bien traitée
-    await new Promise((resolve) => setTimeout(resolve, 50))
+    // Insérer de manière synchrone avec réessai
+    await insertUsageLog(client, userId, keyId, endpoint, status)
 
     console.log(`logUsage - Insertion réussie pour userId: ${userId}, endpoint: ${endpoint}`)
   } catch (error) {
@@ -161,8 +159,11 @@ export async function logUsageAsync(
       return
     }
 
-    // Insérer directement sans attendre la fin de l'opération
-    supabase
+    // Utiliser le client Supabase fourni ou obtenir une connexion persistante
+    const client = supabase || (await getPersistentSupabaseClient())
+
+    // Insérer de manière asynchrone
+    client
         .from("usage_logs")
         .insert({
           user_id: userId,

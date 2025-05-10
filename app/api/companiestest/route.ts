@@ -196,7 +196,11 @@ export async function GET(request: Request) {
             console.error("Erreur lors de la récupération des entreprises:", error)
 
             // Enregistrer l'erreur de manière synchrone
-            logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companiestest", "error")
+            try {
+                await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companiestest", "error")
+            } catch (logError) {
+                console.error("Erreur lors de l'enregistrement du log d'erreur:", logError)
+            }
 
             throw error
         }
@@ -249,7 +253,11 @@ export async function GET(request: Request) {
         }
 
         // Enregistrer l'utilisation (cache miss) de manière synchrone
-        logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companiestest", "success")
+        try {
+            await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companiestest", "success")
+        } catch (logError) {
+            console.error("Erreur lors de l'enregistrement du log pour cache miss:", logError)
+        }
 
         // Retourner les résultats
         const response = NextResponse.json(responseData)
@@ -267,7 +275,7 @@ export async function GET(request: Request) {
             const apiKeyValidation = await validateApiKey(request)
             if (apiKeyValidation.valid) {
                 const supabase = await createClient()
-                logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companiestest", "error")
+                await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companiestest", "error")
             } else {
                 console.log("Validation de la clé API échouée dans le bloc d'erreur:", apiKeyValidation.error)
             }

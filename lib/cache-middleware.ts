@@ -71,8 +71,10 @@ export async function withCache(
             // Enregistrer l'utilisation de manière synchrone si les identifiants sont fournis
             if (userId && keyId && endpoint) {
                 console.log(`withCache - Logging pour cache HIT: userId=${userId}, endpoint=${endpoint}`)
-                // Attendre explicitement l'insertion du log
+
+                // Utiliser un bloc try-catch pour éviter que les erreurs de logging ne bloquent la réponse
                 try {
+                    // Insérer le log de manière synchrone et attendre explicitement la fin de l'opération
                     await logUsage(supabase, userId, keyId, endpoint, "success")
                 } catch (logError) {
                     console.error(`withCache - Erreur lors de l'enregistrement du log pour cache HIT:`, logError)
