@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 
-export function withCache(handler: (req: NextRequest) => Promise<NextResponse>) {
+export function withCache(request: NextRequest, handler: (req: NextRequest) => Promise<NextResponse>, p0: {
+    duration: number;
+    varyByQuery: string[];
+}, userId: any, keyId: any, p1: string) {
     const cache = new Map();
 
     return async (request: NextRequest) => {
-        const userId = request.headers.get("x-user-id"); // Exemple, adaptez selon votre cas
-        const keyId = request.headers.get("x-key-id");
         const endpoint = request.nextUrl.pathname;
 
         const cacheKey = `${userId}-${endpoint}`;
