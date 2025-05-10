@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase/server"
 import { NextResponse } from "next/server"
-import { validateApiKey, checkRateLimit, logUsageAsync } from "@/lib/api-utils"
+import { validateApiKey, checkRateLimit, logUsage } from "@/lib/api-utils"
 import { withCache } from "@/lib/cache-middleware"
 
 export async function GET(request: Request) {
@@ -20,7 +20,7 @@ export async function GET(request: Request) {
         if (!rateLimitCheck.allowed) {
             console.log(`GET ${endpoint} - Limite de taux atteinte`)
             const supabase = await createClient()
-            logUsageAsync(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "error")
+            logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "error")
             return NextResponse.json({ error: rateLimitCheck.error }, { status: 429 })
         }
 
@@ -53,13 +53,13 @@ export async function GET(request: Request) {
 
                 if (error) {
                     console.error(`GET ${endpoint} - Erreur de requête:`, error)
-                    logUsageAsync(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "error")
+                    logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "error")
                     throw error
                 }
 
                 // Enregistrer l'utilisation
                 console.log(`GET ${endpoint} - Requête réussie, enregistrement du log`)
-                logUsageAsync(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "success")
+                logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "success")
 
                 // Préparer la réponse
                 return NextResponse.json({
@@ -88,7 +88,7 @@ export async function GET(request: Request) {
             const apiKeyValidation = await validateApiKey(request)
             if (apiKeyValidation.valid) {
                 const supabase = await createClient()
-                logUsageAsync(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "error")
+                logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "error")
             }
         } catch (logError) {
             console.error(`GET ${endpoint} - Erreur lors de l'enregistrement de l'erreur:`, logError)

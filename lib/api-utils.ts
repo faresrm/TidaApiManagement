@@ -1,5 +1,4 @@
 import { createClient } from "@/lib/supabase/server"
-import { after as after } from "next/server"
 
 // Enum Messages
 export enum ApiError {
@@ -93,7 +92,13 @@ async function insertUsageLog(
   }
 }
 
-export async function logUsage(userId: string, keyId: string, endpoint: string, status: "success" | "error") {
+export async function logUsage(
+    supabaseClient: any,
+    userId: string,
+    keyId: string,
+    endpoint: string,
+    status: "success" | "error",
+) {
   console.log(`logUsage - Début - userId: ${userId}, keyId: ${keyId}, endpoint: ${endpoint}, status: ${status}`)
   try {
     // Valider les paramètres
@@ -106,9 +111,26 @@ export async function logUsage(userId: string, keyId: string, endpoint: string, 
       throw new Error(`Invalid keyId: ${keyId}`)
     }
 
-    const supabase = await createClient()
-    console.log(`logUsage - Client Supabase créé pour userId: ${userId}`)
-    await insertUsageLog(supabase, userId, keyId, endpoint, status)
+    // Utiliser le client Supabase fourni
+    console.log(`logUsage - Utilisation du client Supabase fourni pour userId: ${userId}`)
+
+    // Insérer directement sans attendre la fin de l'opération
+    supabaseClient
+        .from("usage_logs")
+        .insert({
+          user_id: userId,
+          api_key_id: keyId,
+          endpoint,
+          timestamp: new Date().toISOString(),
+          status,
+        })
+        .then(() => {
+          console.log(`logUsage - Insertion réussie pour userId: ${userId}, endpoint: ${endpoint}`)
+        })
+        .catch((error: any) => {
+          console.error(`logUsage - Erreur d'insertion:`, error)
+        })
+
     console.log(`logUsage - Fin avec succès pour userId: ${userId}`)
   } catch (error) {
     console.error("logUsage - Échec de l'enregistrement du log:", {
@@ -118,52 +140,52 @@ export async function logUsage(userId: string, keyId: string, endpoint: string, 
       endpoint,
       status,
     })
-    throw error // Relancer l'erreur pour que l'appelant puisse la gérer
   }
 }
 
-// Version asynchrone de logUsage qui utilise next/after
-export function logUsageAsync(
+// Version asynchrone de logUsage qui ne bloque pas la réponse
+export async function logUsageAsync(
     supabase: any,
     userId: string,
     keyId: string,
     endpoint: string,
     status: "success" | "error",
-): void {
-  // Utiliser next/after pour garantir l'exécution après la réponse
-  after(async () => {
-    try {
-      console.log(`logUsageAsync - Début - userId: ${userId}, endpoint: ${endpoint}`)
+): Promise<void> {
+  try {
+    console.log(`logUsageAsync - Début - userId: ${userId}, endpoint: ${endpoint}`)
 
-      if (!isValidUUID(userId) || !isValidUUID(keyId)) {
-        console.error(`logUsageAsync - UUID invalide: userId=${userId}, keyId=${keyId}`)
-        return
-      }
-
-      const { error } = await supabase.from("usage_logs").insert({
-        user_id: userId,
-        api_key_id: keyId,
-        endpoint,
-        timestamp: new Date().toISOString(),
-        status,
-      })
-
-      if (error) {
-        console.error(`logUsageAsync - Erreur d'insertion:`, error)
-        return
-      }
-
-      console.log(`logUsageAsync - Fin avec succès pour userId: ${userId}, endpoint: ${endpoint}`)
-    } catch (error) {
-      console.error("logUsageAsync - Échec de l'enregistrement du log:", {
-        error,
-        userId,
-        keyId,
-        endpoint,
-        status,
-      })
+    if (!isValidUUID(userId) || !isValidUUID(keyId)) {
+      console.error(`logUsageAsync - UUID invalide: userId=${userId}, keyId=${keyId}`)
+      return
     }
-  })
+
+    // Insérer directement sans attendre la fin de l'opération
+    supabase
+        .from("usage_logs")
+        .insert({
+          user_id: userId,
+          api_key_id: keyId,
+          endpoint,
+          timestamp: new Date().toISOString(),
+          status,
+        })
+        .then(() => {
+          console.log(`logUsageAsync - Insertion réussie pour userId: ${userId}, endpoint: ${endpoint}`)
+        })
+        .catch((error: any) => {
+          console.error(`logUsageAsync - Erreur d'insertion:`, error)
+        })
+
+    console.log(`logUsageAsync - Fin avec succès pour userId: ${userId}`)
+  } catch (error) {
+    console.error("logUsageAsync - Échec de l'enregistrement du log:", {
+      error,
+      userId,
+      keyId,
+      endpoint,
+      status,
+    })
+  }
 }
 
 export async function validateApiKey(request: Request) {
