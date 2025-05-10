@@ -101,7 +101,6 @@ export async function logUsage(
 ) {
   console.log(`logUsage - Début - userId: ${userId}, keyId: ${keyId}, endpoint: ${endpoint}, status: ${status}`)
   try {
-    // Valider les paramètres
     if (!isValidUUID(userId)) {
       console.error(`logUsage - userId invalide: ${userId}`)
       throw new Error(`Invalid userId: ${userId}`)
@@ -111,11 +110,9 @@ export async function logUsage(
       throw new Error(`Invalid keyId: ${keyId}`)
     }
 
-    // Utiliser le client Supabase fourni
     console.log(`logUsage - Utilisation du client Supabase fourni pour userId: ${userId}`)
 
-    // Insérer directement sans attendre la fin de l'opération
-    supabaseClient
+    const { error } = await supabaseClient
         .from("usage_logs")
         .insert({
           user_id: userId,
@@ -124,14 +121,13 @@ export async function logUsage(
           timestamp: new Date().toISOString(),
           status,
         })
-        .then(() => {
-          console.log(`logUsage - Insertion réussie pour userId: ${userId}, endpoint: ${endpoint}`)
-        })
-        .catch((error: any) => {
-          console.error(`logUsage - Erreur d'insertion:`, error)
-        })
 
-    console.log(`logUsage - Fin avec succès pour userId: ${userId}`)
+    if (error) {
+      console.error(`logUsage - Erreur d'insertion:`, error)
+      throw error
+    }
+
+    console.log(`logUsage - Insertion réussie pour userId: ${userId}, endpoint: ${endpoint}`)
   } catch (error) {
     console.error("logUsage - Échec de l'enregistrement du log:", {
       error,
@@ -140,6 +136,7 @@ export async function logUsage(
       endpoint,
       status,
     })
+    throw error // Optionnel : relancer l'erreur pour une gestion plus haut si nécessaire
   }
 }
 

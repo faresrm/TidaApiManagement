@@ -53,7 +53,6 @@ export async function GET(request: Request) {
 
                 if (error) {
                     console.error(`GET ${endpoint} - Erreur de requête:`, error)
-                    const supabase = await createClient();
                     logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "error")
                     throw error
                 }

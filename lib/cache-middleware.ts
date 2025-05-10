@@ -56,26 +56,20 @@ export async function withCache(
     const cacheKey = generateCacheKey(request, options)
     console.log(`withCache - Clé de cache: ${cacheKey}`)
 
-    // Créer un client Supabase une seule fois
     const supabase = await createClient()
 
-    // Vérifier si la réponse est dans le cache
     if (MEMORY_CACHE.has(cacheKey)) {
         const cachedEntry = MEMORY_CACHE.get(cacheKey)
         const cacheAge = Date.now() - cachedEntry.timestamp
 
-        // Si le cache est encore valide
         if (cacheAge < options.duration * 1000) {
             console.log(`withCache - Cache HIT pour ${cacheKey}, âge: ${cacheAge / 1000}s`)
 
-            // Enregistrer l'utilisation de manière synchrone si les identifiants sont fournis
             if (userId && keyId && endpoint) {
                 console.log(`withCache - Logging pour cache HIT: userId=${userId}, endpoint=${endpoint}`)
-                // Utiliser la nouvelle fonction de logging synchrone
-                logUsage(supabase, userId, keyId, endpoint, "success")
+                await logUsage(supabase, userId, keyId, endpoint, "success")
             }
 
-            // Reconstruire la réponse à partir du cache
             const response = NextResponse.json(cachedEntry.data)
             response.headers.set("X-Cache", "HIT")
             response.headers.set("Cache-Control", `public, max-age=${options.duration}`)
@@ -83,31 +77,24 @@ export async function withCache(
 
             return response
         } else {
-            // Supprimer l'entrée expirée
-            console.log(`withCache - Cache expiré pour ${cacheKey}`)
             MEMORY_CACHE.delete(cacheKey)
         }
     }
 
     console.log(`withCache - Cache MISS pour ${cacheKey}`)
 
-    // Exécuter le gestionnaire pour obtenir la réponse
     const response = await handler()
 
-    // Extraire les données de la réponse
     const data = await response.clone().json()
 
-    // Générer un ETag
     const etag = `"${Buffer.from(JSON.stringify(data)).toString("base64").substring(0, 27)}"`
 
-    // Stocker dans le cache
     MEMORY_CACHE.set(cacheKey, {
         data,
         timestamp: Date.now(),
         etag,
     })
 
-    // Nettoyer le cache si nécessaire
     if (options.maxSize && MEMORY_CACHE.size > options.maxSize) {
         console.log(`withCache - Nettoyage du cache, taille actuelle: ${MEMORY_CACHE.size}`)
         const entries = [...MEMORY_CACHE.entries()].sort((a, b) => {
@@ -119,7 +106,6 @@ export async function withCache(
         }
     }
 
-    // Ajouter les en-têtes de cache à la réponse
     response.headers.set("X-Cache", "MISS")
     response.headers.set("Cache-Control", `public, max-age=${options.duration}`)
     response.headers.set("ETag", etag)
