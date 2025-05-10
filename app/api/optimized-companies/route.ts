@@ -5,26 +5,32 @@ import { withCache } from "@/lib/cache-middleware"
 
 export async function GET(request: Request) {
     const endpoint = "/api/optimized-companies"
+    console.log(`GET ${endpoint} - Début`)
 
     try {
         // Valider la clé API
         const apiKeyValidation = await validateApiKey(request)
         if (!apiKeyValidation.valid) {
+            console.log(`GET ${endpoint} - Validation de la clé API échouée`)
             return NextResponse.json({ error: apiKeyValidation.error }, { status: 401 })
         }
 
         // Vérifier les limites de taux
         const rateLimitCheck = await checkRateLimit(apiKeyValidation.userId)
         if (!rateLimitCheck.allowed) {
+            console.log(`GET ${endpoint} - Limite de taux atteinte`)
             const supabase = await createClient()
             logUsageAsync(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "error")
             return NextResponse.json({ error: rateLimitCheck.error }, { status: 429 })
         }
 
+        console.log(`GET ${endpoint} - Validation OK, userId: ${apiKeyValidation.userId}`)
+
         // Utiliser le middleware de cache
         return await withCache(
             request,
             async () => {
+                console.log(`GET ${endpoint} - Exécution de la requête (cache miss)`)
                 const supabase = await createClient()
                 const url = new URL(request.url)
 
@@ -46,11 +52,13 @@ export async function GET(request: Request) {
                     .range(offset, offset + validatedLimit - 1)
 
                 if (error) {
+                    console.error(`GET ${endpoint} - Erreur de requête:`, error)
                     logUsageAsync(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "error")
                     throw error
                 }
 
                 // Enregistrer l'utilisation
+                console.log(`GET ${endpoint} - Requête réussie, enregistrement du log`)
                 logUsageAsync(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "success")
 
                 // Préparer la réponse
@@ -74,7 +82,7 @@ export async function GET(request: Request) {
             endpoint,
         )
     } catch (error: any) {
-        console.error("Erreur complète:", error)
+        console.error(`GET ${endpoint} - Erreur:`, error)
 
         try {
             const apiKeyValidation = await validateApiKey(request)
@@ -83,7 +91,7 @@ export async function GET(request: Request) {
                 logUsageAsync(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "error")
             }
         } catch (logError) {
-            console.error("Erreur lors de l'enregistrement de l'erreur:", logError)
+            console.error(`GET ${endpoint} - Erreur lors de l'enregistrement de l'erreur:`, logError)
         }
 
         return NextResponse.json(

@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server"
+import { after as after } from "next/server"
 
 // Enum Messages
 export enum ApiError {
@@ -121,20 +122,25 @@ export async function logUsage(userId: string, keyId: string, endpoint: string, 
   }
 }
 
-// Version asynchrone de logUsage qui ne bloque pas la réponse
-export async function logUsageAsync(
+// Version asynchrone de logUsage qui utilise next/after
+export function logUsageAsync(
     supabase: any,
     userId: string,
     keyId: string,
     endpoint: string,
     status: "success" | "error",
-): Promise<void> {
-  // Utiliser Promise.resolve().then() pour rendre l'opération non-bloquante
-  Promise.resolve().then(async () => {
+): void {
+  // Utiliser next/after pour garantir l'exécution après la réponse
+  after(async () => {
     try {
       console.log(`logUsageAsync - Début - userId: ${userId}, endpoint: ${endpoint}`)
 
-      await supabase.from("usage_logs").insert({
+      if (!isValidUUID(userId) || !isValidUUID(keyId)) {
+        console.error(`logUsageAsync - UUID invalide: userId=${userId}, keyId=${keyId}`)
+        return
+      }
+
+      const { error } = await supabase.from("usage_logs").insert({
         user_id: userId,
         api_key_id: keyId,
         endpoint,
@@ -142,7 +148,12 @@ export async function logUsageAsync(
         status,
       })
 
-      console.log(`logUsageAsync - Fin avec succès pour userId: ${userId}`)
+      if (error) {
+        console.error(`logUsageAsync - Erreur d'insertion:`, error)
+        return
+      }
+
+      console.log(`logUsageAsync - Fin avec succès pour userId: ${userId}, endpoint: ${endpoint}`)
     } catch (error) {
       console.error("logUsageAsync - Échec de l'enregistrement du log:", {
         error,
@@ -151,7 +162,6 @@ export async function logUsageAsync(
         endpoint,
         status,
       })
-      // Ne pas relancer l'erreur pour ne pas affecter la réponse
     }
   })
 }
