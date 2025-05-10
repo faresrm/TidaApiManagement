@@ -67,8 +67,8 @@ export async function GET(request: Request) {
             if (cacheAge < CACHE_DURATION * 1000) {
                 console.log(`Cache hit pour ${cacheKey}, âge: ${cacheAge / 1000}s, userId: ${apiKeyValidation.userId}`)
 
-                // Enregistrer l'utilisation (cache hit) via la file d'attente
-                logUsage(apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companiestest", "success")
+                // Enregistrer l'utilisation (cache hit) de manière synchrone
+                logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companiestest", "success")
 
                 // Retourner les données mises en cache avec les en-têtes de cache appropriés
                 const response = NextResponse.json(cachedEntry.data)
@@ -89,8 +89,8 @@ export async function GET(request: Request) {
             console.log(`Bloc ETag Hit - ETag: ${ifNoneMatch} - Début`)
             console.log(`ETag hit pour ${ifNoneMatch}, userId: ${apiKeyValidation.userId}`)
 
-            // Enregistrer l'utilisation (ETag hit) via la file d'attente
-            logUsage(apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companiestest", "success")
+            // Enregistrer l'utilisation (ETag hit) de manière synchrone
+            logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companiestest", "success")
 
             const response = new Response(null, { status: 304 }) // Not Modified
             response.headers.set("Cache-Control", `public, max-age=${CACHE_DURATION}`)
@@ -185,8 +185,8 @@ export async function GET(request: Request) {
         if (error) {
             console.error("Erreur lors de la récupération des entreprises:", error)
 
-            // Enregistrer l'erreur via la file d'attente
-            logUsage(apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companiestest", "error")
+            // Enregistrer l'erreur de manière synchrone
+            logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companiestest", "error")
 
             throw error
         }
@@ -238,8 +238,8 @@ export async function GET(request: Request) {
             }
         }
 
-        // Enregistrer l'utilisation (cache miss) via la file d'attente
-        logUsage(apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companiestest", "success")
+        // Enregistrer l'utilisation (cache miss) de manière synchrone
+        logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companiestest", "success")
 
         // Retourner les résultats
         const response = NextResponse.json(responseData)
@@ -252,11 +252,12 @@ export async function GET(request: Request) {
     } catch (error: any) {
         console.error("Erreur complète:", error)
 
-        // Enregistrer l'erreur via la file d'attente
+        // Enregistrer l'erreur de manière synchrone
         try {
             const apiKeyValidation = await validateApiKey(request)
             if (apiKeyValidation.valid) {
-                logUsage(apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companiestest", "error")
+                const supabase = await createClient()
+                logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companiestest", "error")
             } else {
                 console.log("Validation de la clé API échouée dans le bloc d'erreur:", apiKeyValidation.error)
             }

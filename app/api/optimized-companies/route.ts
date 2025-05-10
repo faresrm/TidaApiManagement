@@ -19,7 +19,8 @@ export async function GET(request: Request) {
         const rateLimitCheck = await checkRateLimit(apiKeyValidation.userId)
         if (!rateLimitCheck.allowed) {
             console.log(`GET ${endpoint} - Limite de taux atteinte`)
-            logUsage(apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "error")
+            const supabase = await createClient()
+            logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "error")
             return NextResponse.json({ error: rateLimitCheck.error }, { status: 429 })
         }
 
@@ -52,13 +53,13 @@ export async function GET(request: Request) {
 
                 if (error) {
                     console.error(`GET ${endpoint} - Erreur de requête:`, error)
-                    logUsage(apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "error")
+                    logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "error")
                     throw error
                 }
 
                 // Enregistrer l'utilisation
                 console.log(`GET ${endpoint} - Requête réussie, enregistrement du log`)
-                logUsage(apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "success")
+                logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "success")
 
                 // Préparer la réponse
                 return NextResponse.json({
@@ -86,7 +87,8 @@ export async function GET(request: Request) {
         try {
             const apiKeyValidation = await validateApiKey(request)
             if (apiKeyValidation.valid) {
-                logUsage(apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "error")
+                const supabase = await createClient()
+                logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "error")
             }
         } catch (logError) {
             console.error(`GET ${endpoint} - Erreur lors de l'enregistrement de l'erreur:`, logError)

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server"
+import { createClient } from "@/lib/supabase/server"
 import { logUsage } from "@/lib/api-utils"
 
 // Type pour les options de cache
@@ -55,6 +56,9 @@ export async function withCache(
     const cacheKey = generateCacheKey(request, options)
     console.log(`withCache - Clé de cache: ${cacheKey}`)
 
+    // Créer un client Supabase une seule fois
+    const supabase = await createClient()
+
     // Vérifier si la réponse est dans le cache
     if (MEMORY_CACHE.has(cacheKey)) {
         const cachedEntry = MEMORY_CACHE.get(cacheKey)
@@ -64,10 +68,11 @@ export async function withCache(
         if (cacheAge < options.duration * 1000) {
             console.log(`withCache - Cache HIT pour ${cacheKey}, âge: ${cacheAge / 1000}s`)
 
-            // Enregistrer l'utilisation via la file d'attente si les identifiants sont fournis
+            // Enregistrer l'utilisation de manière synchrone si les identifiants sont fournis
             if (userId && keyId && endpoint) {
                 console.log(`withCache - Logging pour cache HIT: userId=${userId}, endpoint=${endpoint}`)
-                logUsage(userId, keyId, endpoint, "success")
+                // Utiliser la nouvelle fonction de logging synchrone
+                logUsage(supabase, userId, keyId, endpoint, "success")
             }
 
             // Reconstruire la réponse à partir du cache
