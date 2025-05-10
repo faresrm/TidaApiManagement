@@ -88,7 +88,7 @@ export async function GET(request: Request) {
             const apiKeyValidation = await validateApiKey(request)
             if (apiKeyValidation.valid) {
                 const supabase = await createClient()
-                logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "error")
+                await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, endpoint, "error")
             }
         } catch (logError) {
             console.error(`GET ${endpoint} - Erreur lors de l'enregistrement de l'erreur:`, logError)

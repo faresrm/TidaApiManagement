@@ -67,8 +67,13 @@ export async function GET(request: Request) {
             if (cacheAge < CACHE_DURATION * 1000) {
                 console.log(`Cache hit pour ${cacheKey}, âge: ${cacheAge / 1000}s, userId: ${apiKeyValidation.userId}`)
 
-                // Enregistrer l'utilisation (cache hit) de manière synchrone
-                logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companiestest", "success")
+                // Enregistrer l'utilisation (cache hit) de manière synchrone et attendre explicitement
+                try {
+                    await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companiestest", "success")
+                } catch (logError) {
+                    console.error("Erreur lors de l'enregistrement du log pour cache hit:", logError)
+                    // Continuer malgré l'erreur de logging
+                }
 
                 // Retourner les données mises en cache avec les en-têtes de cache appropriés
                 const response = NextResponse.json(cachedEntry.data)
@@ -89,8 +94,13 @@ export async function GET(request: Request) {
             console.log(`Bloc ETag Hit - ETag: ${ifNoneMatch} - Début`)
             console.log(`ETag hit pour ${ifNoneMatch}, userId: ${apiKeyValidation.userId}`)
 
-            // Enregistrer l'utilisation (ETag hit) de manière synchrone
-            logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companiestest", "success")
+            // Enregistrer l'utilisation (ETag hit) de manière synchrone et attendre explicitement
+            try {
+                await logUsage(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companiestest", "success")
+            } catch (logError) {
+                console.error("Erreur lors de l'enregistrement du log pour ETag hit:", logError)
+                // Continuer malgré l'erreur de logging
+            }
 
             const response = new Response(null, { status: 304 }) // Not Modified
             response.headers.set("Cache-Control", `public, max-age=${CACHE_DURATION}`)
