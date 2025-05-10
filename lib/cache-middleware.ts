@@ -45,70 +45,71 @@ function generateCacheKey(request: Request, options: CacheOptions): string {
 }
 
 // Middleware de cache
+
 export async function withCache(
     request: Request,
     handler: () => Promise<NextResponse>,
     options: CacheOptions,
     userId?: string,
     keyId?: string,
-    endpoint?: string,
+    endpoint?: string
 ): Promise<NextResponse> {
-    const cacheKey = generateCacheKey(request, options)
-    console.log(`withCache - Clé de cache: ${cacheKey}`)
+    const cacheKey = generateCacheKey(request, options);
+    console.log(`withCache - Clé de cache: ${cacheKey}`);
 
-    const supabase = await createClient()
-
+    // Cas du cache HIT
     if (MEMORY_CACHE.has(cacheKey)) {
-        const cachedEntry = MEMORY_CACHE.get(cacheKey)
-        const cacheAge = Date.now() - cachedEntry.timestamp
+        const cachedEntry = MEMORY_CACHE.get(cacheKey);
+        const cacheAge = Date.now() - cachedEntry.timestamp;
 
         if (cacheAge < options.duration * 1000) {
-            console.log(`withCache - Cache HIT pour ${cacheKey}, âge: ${cacheAge / 1000}s`)
+            console.log(`withCache - Cache HIT pour ${cacheKey}, âge: ${cacheAge / 1000}s`);
 
+            // Si les informations de log sont présentes, appeler l'endpoint /api/log-usage
             if (userId && keyId && endpoint) {
-                console.log(`withCache - Logging pour cache HIT: userId=${userId}, endpoint=${endpoint}`)
-                await logUsage(supabase, userId, keyId, endpoint, "success")
+                console.log(`withCache - Logging pour cache HIT: userId=${userId}, endpoint=${endpoint}`);
+                fetch(new URL("/api/log-usage", request.url).toString(), {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ userId, keyId, endpoint, status: "success" }),
+                }).catch((error) => console.error("Erreur lors de l'appel à /api/log-usage:", error));
             }
 
-            const response = NextResponse.json(cachedEntry.data)
-            response.headers.set("X-Cache", "HIT")
-            response.headers.set("Cache-Control", `public, max-age=${options.duration}`)
-            response.headers.set("ETag", cachedEntry.etag)
-
-            return response
+            // Renvoyer la réponse immédiatement
+            const response = NextResponse.json(cachedEntry.data);
+            response.headers.set("X-Cache", "HIT");
+            response.headers.set("Cache-Control", `public, max-age=${options.duration}`);
+            response.headers.set("ETag", cachedEntry.etag);
+            return response;
         } else {
-            MEMORY_CACHE.delete(cacheKey)
+            MEMORY_CACHE.delete(cacheKey);
         }
     }
 
-    console.log(`withCache - Cache MISS pour ${cacheKey}`)
-
-    const response = await handler()
-
-    const data = await response.clone().json()
-
-    const etag = `"${Buffer.from(JSON.stringify(data)).toString("base64").substring(0, 27)}"`
+    // Cas du cache MISS
+    console.log(`withCache - Cache MISS pour ${cacheKey}`);
+    const response = await handler();
+    const data = await response.clone().json();
+    const etag = `"${Buffer.from(JSON.stringify(data)).toString("base64").substring(0, 27)}"`;
 
     MEMORY_CACHE.set(cacheKey, {
         data,
         timestamp: Date.now(),
         etag,
-    })
+    });
 
+    // Gestion de la taille du cache (si nécessaire)
     if (options.maxSize && MEMORY_CACHE.size > options.maxSize) {
-        console.log(`withCache - Nettoyage du cache, taille actuelle: ${MEMORY_CACHE.size}`)
-        const entries = [...MEMORY_CACHE.entries()].sort((a, b) => {
-            return a[1].timestamp - b[1].timestamp
-        })
-
+        console.log(`withCache - Nettoyage du cache, taille actuelle: ${MEMORY_CACHE.size}`);
+        const entries = [...MEMORY_CACHE.entries()].sort((a, b) => a[1].timestamp - b[1].timestamp);
         for (let i = 0; i < Math.floor(options.maxSize * 0.2) && i < entries.length; i++) {
-            MEMORY_CACHE.delete(entries[i][0])
+            MEMORY_CACHE.delete(entries[i][0]);
         }
     }
 
-    response.headers.set("X-Cache", "MISS")
-    response.headers.set("Cache-Control", `public, max-age=${options.duration}`)
-    response.headers.set("ETag", etag)
+    response.headers.set("X-Cache", "MISS");
+    response.headers.set("Cache-Control", `public, max-age=${options.duration}`);
+    response.headers.set("ETag", etag);
 
-    return response
+    return response;
 }
