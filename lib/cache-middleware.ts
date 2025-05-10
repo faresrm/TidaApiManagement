@@ -1,40 +1,123 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server"
+import { logUsage } from "@/lib/api-utils"
 
-export function withCache(request: NextRequest, handler: (req: NextRequest) => Promise<NextResponse>, p0: {
-    duration: number;
-    varyByQuery: string[];
-}, userId: any, keyId: any, p1: string) {
-    const cache = new Map();
+// Type pour les options de cache
+interface CacheOptions {
+    duration: number // Durée en secondes
+    varyByQuery?: string[] // Paramètres de requête à inclure dans la clé de cache
+    varyByHeader?: string[] // En-têtes à inclure dans la clé de cache
+    maxSize?: number // Taille maximale du cache
+}
 
-    return async (request: NextRequest) => {
-        const endpoint = request.nextUrl.pathname;
+// Cache en mémoire global
+const MEMORY_CACHE = new Map()
 
-        const cacheKey = `${userId}-${endpoint}`;
-        const cachedResponse = cache.get(cacheKey);
+// Fonction pour générer une clé de cache
+function generateCacheKey(request: Request, options: CacheOptions): string {
+    const url = new URL(request.url)
+    const path = url.pathname
 
-        if (cachedResponse) {
-            console.log(`Cache HIT pour ${cacheKey}`);
-            // Appeler la fonction edge pour logger l’utilisation
-            fetch(new URL("/api/log-usage-edge", request.url).toString(), {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ userId, keyId, endpoint, status: "success" }),
-            }).catch((error) => console.error("Erreur lors de l'appel à /api/log-usage-edge:", error));
-
-            return cachedResponse; // Renvoie la réponse mise en cache
+    // Inclure les paramètres de requête spécifiés
+    const queryParams: Record<string, string> = {}
+    if (options.varyByQuery) {
+        for (const param of options.varyByQuery) {
+            const value = url.searchParams.get(param)
+            if (value) {
+                queryParams[param] = value
+            }
         }
+    }
 
-        console.log(`Cache MISS pour ${cacheKey}`);
-        const response = await handler(request);
-        cache.set(cacheKey, response);
+    // Inclure les en-têtes spécifiés
+    const headers: Record<string, string> = {}
+    if (options.varyByHeader) {
+        for (const header of options.varyByHeader) {
+            const value = request.headers.get(header)
+            if (value) {
+                headers[header] = value
+            }
+        }
+    }
 
-        // Logger aussi pour le cache MISS
-        fetch(new URL("/api/log-usage-edge", request.url).toString(), {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ userId, keyId, endpoint, status: "success" }),
-        }).catch((error) => console.error("Erreur lors de l'appel à /api/log-usage-edge:", error));
+    // Générer la clé de cache
+    return `${path}:${JSON.stringify(queryParams)}:${JSON.stringify(headers)}`
+}
 
-        return response;
-    };
+// Middleware de cache
+export async function withCache(
+    request: Request,
+    handler: () => Promise<NextResponse>,
+    options: CacheOptions,
+    userId?: string,
+    keyId?: string,
+    endpoint?: string,
+): Promise<NextResponse> {
+    const cacheKey = generateCacheKey(request, options)
+    console.log(`withCache - Clé de cache: ${cacheKey}`)
+
+    // Vérifier si la réponse est dans le cache
+    if (MEMORY_CACHE.has(cacheKey)) {
+        const cachedEntry = MEMORY_CACHE.get(cacheKey)
+        const cacheAge = Date.now() - cachedEntry.timestamp
+
+        // Si le cache est encore valide
+        if (cacheAge < options.duration * 1000) {
+            console.log(`withCache - Cache HIT pour ${cacheKey}, âge: ${cacheAge / 1000}s`)
+
+            // Enregistrer l'utilisation via la file d'attente si les identifiants sont fournis
+            if (userId && keyId && endpoint) {
+                console.log(`withCache - Logging pour cache HIT: userId=${userId}, endpoint=${endpoint}`)
+                logUsage(userId, keyId, endpoint, "success")
+            }
+
+            // Reconstruire la réponse à partir du cache
+            const response = NextResponse.json(cachedEntry.data)
+            response.headers.set("X-Cache", "HIT")
+            response.headers.set("Cache-Control", `public, max-age=${options.duration}`)
+            response.headers.set("ETag", cachedEntry.etag)
+
+            return response
+        } else {
+            // Supprimer l'entrée expirée
+            console.log(`withCache - Cache expiré pour ${cacheKey}`)
+            MEMORY_CACHE.delete(cacheKey)
+        }
+    }
+
+    console.log(`withCache - Cache MISS pour ${cacheKey}`)
+
+    // Exécuter le gestionnaire pour obtenir la réponse
+    const response = await handler()
+
+    // Extraire les données de la réponse
+    const data = await response.clone().json()
+
+    // Générer un ETag
+    const etag = `"${Buffer.from(JSON.stringify(data)).toString("base64").substring(0, 27)}"`
+
+    // Stocker dans le cache
+    MEMORY_CACHE.set(cacheKey, {
+        data,
+        timestamp: Date.now(),
+        etag,
+    })
+
+    // Nettoyer le cache si nécessaire
+    if (options.maxSize && MEMORY_CACHE.size > options.maxSize) {
+        console.log(`withCache - Nettoyage du cache, taille actuelle: ${MEMORY_CACHE.size}`)
+        const entries = [...MEMORY_CACHE.entries()].sort((a, b) => {
+            return a[1].timestamp - b[1].timestamp
+        })
+
+        for (let i = 0; i < Math.floor(options.maxSize * 0.2) && i < entries.length; i++) {
+            MEMORY_CACHE.delete(entries[i][0])
+        }
+    }
+
+    // Ajouter les en-têtes de cache à la réponse
+    response.headers.set("X-Cache", "MISS")
+    response.headers.set("Cache-Control", `public, max-age=${options.duration}`)
+    response.headers.set("ETag", etag)
+
+    return response
 }
