@@ -40,12 +40,12 @@ export function formatApiMessage(message: string, params: Record<string, string 
 
 // Fonction pour valider un UUID
 const isValidUUID = (str: string): boolean => {
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-  return uuidRegex.test(str);
-};
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+  return uuidRegex.test(str)
+}
 
 // Fonction utilitaire pour forcer un délai
-const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 // Fonction pour insérer un log avec réessai
 async function insertUsageLog(
@@ -54,9 +54,11 @@ async function insertUsageLog(
     keyId: string,
     endpoint: string,
     status: "success" | "error",
-    retries: number = 2
+    retries = 2,
 ): Promise<void> {
-  console.log(`Début de l'insertion dans usage_logs - userId: ${userId}, keyId: ${keyId}, endpoint: ${endpoint}, status: ${status}`);
+  console.log(
+      `Début de l'insertion dans usage_logs - userId: ${userId}, keyId: ${keyId}, endpoint: ${endpoint}, status: ${status}`,
+  )
   try {
     const { error } = await supabase.from("usage_logs").insert({
       user_id: userId,
@@ -64,7 +66,7 @@ async function insertUsageLog(
       endpoint,
       timestamp: new Date().toISOString(),
       status,
-    });
+    })
 
     if (error) {
       console.error("Erreur lors de l'insertion dans usage_logs:", {
@@ -76,42 +78,37 @@ async function insertUsageLog(
         keyId,
         endpoint,
         status,
-      });
-      throw error;
+      })
+      throw error
     }
-    console.log(`Insertion réussie dans usage_logs pour userId: ${userId}`);
+    console.log(`Insertion réussie dans usage_logs pour userId: ${userId}`)
   } catch (error) {
     if (retries > 0) {
-      console.log(`Échec de l'insertion, réessai (${retries} tentatives restantes) après un délai...`);
-      await delay(1000); // Attendre 1 seconde avant de réessayer
-      return insertUsageLog(supabase, userId, keyId, endpoint, status, retries - 1);
+      console.log(`Échec de l'insertion, réessai (${retries} tentatives restantes) après un délai...`)
+      await delay(1000) // Attendre 1 seconde avant de réessayer
+      return insertUsageLog(supabase, userId, keyId, endpoint, status, retries - 1)
     }
-    throw error;
+    throw error
   }
 }
 
-export async function logUsage(
-    userId: string,
-    keyId: string,
-    endpoint: string,
-    status: "success" | "error"
-) {
-  console.log(`logUsage - Début - userId: ${userId}, keyId: ${keyId}, endpoint: ${endpoint}, status: ${status}`);
+export async function logUsage(userId: string, keyId: string, endpoint: string, status: "success" | "error") {
+  console.log(`logUsage - Début - userId: ${userId}, keyId: ${keyId}, endpoint: ${endpoint}, status: ${status}`)
   try {
     // Valider les paramètres
     if (!isValidUUID(userId)) {
-      console.error(`logUsage - userId invalide: ${userId}`);
-      throw new Error(`Invalid userId: ${userId}`);
+      console.error(`logUsage - userId invalide: ${userId}`)
+      throw new Error(`Invalid userId: ${userId}`)
     }
     if (!isValidUUID(keyId)) {
-      console.error(`logUsage - keyId invalide: ${keyId}`);
-      throw new Error(`Invalid keyId: ${keyId}`);
+      console.error(`logUsage - keyId invalide: ${keyId}`)
+      throw new Error(`Invalid keyId: ${keyId}`)
     }
 
-    const supabase = await createClient();
-    console.log(`logUsage - Client Supabase créé pour userId: ${userId}`);
-    await insertUsageLog(supabase, userId, keyId, endpoint, status);
-    console.log(`logUsage - Fin avec succès pour userId: ${userId}`);
+    const supabase = await createClient()
+    console.log(`logUsage - Client Supabase créé pour userId: ${userId}`)
+    await insertUsageLog(supabase, userId, keyId, endpoint, status)
+    console.log(`logUsage - Fin avec succès pour userId: ${userId}`)
   } catch (error) {
     console.error("logUsage - Échec de l'enregistrement du log:", {
       error,
@@ -119,13 +116,48 @@ export async function logUsage(
       keyId,
       endpoint,
       status,
-    });
-    throw error; // Relancer l'erreur pour que l'appelant puisse la gérer
+    })
+    throw error // Relancer l'erreur pour que l'appelant puisse la gérer
   }
 }
 
+// Version asynchrone de logUsage qui ne bloque pas la réponse
+export async function logUsageAsync(
+    supabase: any,
+    userId: string,
+    keyId: string,
+    endpoint: string,
+    status: "success" | "error",
+): Promise<void> {
+  // Utiliser Promise.resolve().then() pour rendre l'opération non-bloquante
+  Promise.resolve().then(async () => {
+    try {
+      console.log(`logUsageAsync - Début - userId: ${userId}, endpoint: ${endpoint}`)
+
+      await supabase.from("usage_logs").insert({
+        user_id: userId,
+        api_key_id: keyId,
+        endpoint,
+        timestamp: new Date().toISOString(),
+        status,
+      })
+
+      console.log(`logUsageAsync - Fin avec succès pour userId: ${userId}`)
+    } catch (error) {
+      console.error("logUsageAsync - Échec de l'enregistrement du log:", {
+        error,
+        userId,
+        keyId,
+        endpoint,
+        status,
+      })
+      // Ne pas relancer l'erreur pour ne pas affecter la réponse
+    }
+  })
+}
+
 export async function validateApiKey(request: Request) {
-  console.log("validateApiKey - Début");
+  console.log("validateApiKey - Début")
   try {
     const url = new URL(request.url)
     const apiKey = url.searchParams.get("apikey")
@@ -133,7 +165,7 @@ export async function validateApiKey(request: Request) {
     if (!apiKey) {
       authHeader = request.headers.get("authorization")
       if (!authHeader || !authHeader.startsWith("Bearer ")) {
-        console.log("validateApiKey - Clé API manquante");
+        console.log("validateApiKey - Clé API manquante")
         return {
           valid: false,
           error: ApiError.MISSING_API_KEY,
@@ -160,7 +192,7 @@ export async function validateApiKey(request: Request) {
     }
 
     if (!keyData || !keyData.is_active) {
-      console.log("validateApiKey - Clé inactive ou inexistante");
+      console.log("validateApiKey - Clé inactive ou inexistante")
       return {
         valid: false,
         error: ApiError.INACTIVE_API_KEY,
@@ -177,7 +209,7 @@ export async function validateApiKey(request: Request) {
     }
 
     await supabase.from("api_keys").update({ last_used: new Date().toISOString() }).eq("id", keyData.id)
-    console.log("validateApiKey - Clé API validée avec succès, userId:", keyData.user_id);
+    console.log("validateApiKey - Clé API validée avec succès, userId:", keyData.user_id)
 
     return {
       valid: true,
@@ -194,7 +226,7 @@ export async function validateApiKey(request: Request) {
 }
 
 export async function checkRateLimit(userId: string) {
-  console.log("checkRateLimit - Début pour userId:", userId);
+  console.log("checkRateLimit - Début pour userId:", userId)
   try {
     if (!isValidUUID(userId)) {
       console.error("checkRateLimit - userId invalide:", userId)
@@ -252,7 +284,7 @@ export async function checkRateLimit(userId: string) {
     console.log("checkRateLimit - Nombre d'appels aujourd'hui:", dailyCount)
 
     if (dailyCount && dailyCount >= plan.daily_limit) {
-      console.log("checkRateLimit - Limite quotidienne atteinte");
+      console.log("checkRateLimit - Limite quotidienne atteinte")
       return {
         allowed: false,
         error: ApiError.DAILY_LIMIT_REACHED.replace("{limit}", String(plan.daily_limit)),
@@ -278,7 +310,7 @@ export async function checkRateLimit(userId: string) {
       const requestsPerMinute = plan.request_interval > 0 ? Math.floor(60 / plan.request_interval) : 1000000
 
       if (recentCount && recentCount >= requestsPerMinute) {
-        console.log("checkRateLimit - Limite de taux par minute atteinte");
+        console.log("checkRateLimit - Limite de taux par minute atteinte")
         return {
           allowed: false,
           error: ApiError.RATE_LIMIT_REACHED.replace("{limit}", String(requestsPerMinute)),
@@ -286,7 +318,7 @@ export async function checkRateLimit(userId: string) {
       }
     }
 
-    console.log("checkRateLimit - Limites de taux OK");
+    console.log("checkRateLimit - Limites de taux OK")
     return {
       allowed: true,
     }

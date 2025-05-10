@@ -1,16 +1,13 @@
 import { createClient } from "@/lib/supabase/server"
 import { NextResponse } from "next/server"
-import { validateApiKey, checkRateLimit, logUsage } from "@/lib/api-utils"
+import { validateApiKey, checkRateLimit, logUsageAsync } from "@/lib/api-utils"
 
 // Cache en mémoire simple
 const MEMORY_CACHE = new Map()
 const CACHE_DURATION = 300 // 5 minutes en secondes
 
-// Fonction utilitaire pour forcer un délai (pour garantir que les journaux sont flushés)
-const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-
 export async function GET(request: Request) {
-    console.log("Requête GET /api/companies reçue - Début");
+    console.log("Requête GET /api/companiestest reçue - Début")
 
     try {
         // Valider la clé API
@@ -18,17 +15,14 @@ export async function GET(request: Request) {
         console.log("Résultat de la validation de la clé API:", apiKeyValidation)
 
         if (!apiKeyValidation.valid) {
-            console.log("Validation de la clé API échouée:", apiKeyValidation.error);
+            console.log("Validation de la clé API échouée:", apiKeyValidation.error)
             return NextResponse.json({ error: apiKeyValidation.error }, { status: 401 })
         }
 
         // Vérifier que userId et keyId sont des chaînes valides
         if (typeof apiKeyValidation.userId !== "string" || typeof apiKeyValidation.keyId !== "string") {
             console.error("Invalid apiKeyValidation:", apiKeyValidation)
-            return NextResponse.json(
-                { error: "Internal server error: Invalid API key validation data" },
-                { status: 500 }
-            )
+            return NextResponse.json({ error: "Internal server error: Invalid API key validation data" }, { status: 500 })
         }
 
         // Vérifier les limites de taux
@@ -36,7 +30,7 @@ export async function GET(request: Request) {
         console.log("Résultat de la vérification des limites:", rateLimitCheck)
 
         if (!rateLimitCheck.allowed) {
-            console.log("Limite de taux atteinte:", rateLimitCheck.error);
+            console.log("Limite de taux atteinte:", rateLimitCheck.error)
             return NextResponse.json({ error: rateLimitCheck.error }, { status: 429 })
         }
 
@@ -65,31 +59,26 @@ export async function GET(request: Request) {
 
         // Vérifier si nous avons une version mise en cache de cette requête
         if (MEMORY_CACHE.has(cacheKey)) {
-            console.log(`Bloc Cache Hit - Clé: ${cacheKey} - Début`);
+            console.log(`Bloc Cache Hit - Clé: ${cacheKey} - Début`)
             const cachedEntry = MEMORY_CACHE.get(cacheKey)
             const cacheAge = Date.now() - cachedEntry.timestamp
 
             // Si le cache est encore valide (moins de CACHE_DURATION secondes)
             if (cacheAge < CACHE_DURATION * 1000) {
-                console.log(`Cache hit pour ${cacheKey}, âge: ${cacheAge / 1000}s, userId: ${apiKeyValidation.userId}`);
+                console.log(`Cache hit pour ${cacheKey}, âge: ${cacheAge / 1000}s, userId: ${apiKeyValidation.userId}`)
 
-                // Enregistrer l'utilisation (cache hit)
-                console.log(`Cache Hit - Tentative d'enregistrement du log, userId: ${apiKeyValidation.userId}, keyId: ${apiKeyValidation.keyId}`);
-                await logUsage(apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companies", "success");
-                console.log(`Cache Hit - Log enregistré pour userId: ${apiKeyValidation.userId}`);
-
-                // Forcer un léger délai pour garantir que les journaux sont flushés
-                await delay(50);
+                // Enregistrer l'utilisation (cache hit) de manière asynchrone
+                logUsageAsync(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companiestest", "success")
 
                 // Retourner les données mises en cache avec les en-têtes de cache appropriés
                 const response = NextResponse.json(cachedEntry.data)
                 response.headers.set("X-Cache", "HIT")
                 response.headers.set("Cache-Control", `public, max-age=${CACHE_DURATION}`)
                 response.headers.set("ETag", cachedEntry.etag)
-                console.log(`Bloc Cache Hit - Fin`);
+                console.log(`Bloc Cache Hit - Fin`)
                 return response
             } else {
-                console.log(`Cache expiré pour ${cacheKey}, suppression`);
+                console.log(`Cache expiré pour ${cacheKey}, suppression`)
                 MEMORY_CACHE.delete(cacheKey)
             }
         }
@@ -97,26 +86,21 @@ export async function GET(request: Request) {
         // Vérifier si le client a envoyé un en-tête If-None-Match (ETag)
         const ifNoneMatch = request.headers.get("If-None-Match")
         if (ifNoneMatch && MEMORY_CACHE.has(`etag:${ifNoneMatch}`)) {
-            console.log(`Bloc ETag Hit - ETag: ${ifNoneMatch} - Début`);
-            console.log(`ETag hit pour ${ifNoneMatch}, userId: ${apiKeyValidation.userId}`);
+            console.log(`Bloc ETag Hit - ETag: ${ifNoneMatch} - Début`)
+            console.log(`ETag hit pour ${ifNoneMatch}, userId: ${apiKeyValidation.userId}`)
 
-            // Enregistrer l'utilisation (ETag hit)
-            console.log(`ETag Hit - Tentative d'enregistrement du log, userId: ${apiKeyValidation.userId}, keyId: ${apiKeyValidation.keyId}`);
-            await logUsage(apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companies", "success");
-            console.log(`ETag Hit - Log enregistré pour userId: ${apiKeyValidation.userId}`);
-
-            // Forcer un léger délai pour garantir que les journaux sont flushés
-            await delay(50);
+            // Enregistrer l'utilisation (ETag hit) de manière asynchrone
+            logUsageAsync(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companiestest", "success")
 
             const response = new Response(null, { status: 304 }) // Not Modified
             response.headers.set("Cache-Control", `public, max-age=${CACHE_DURATION}`)
             response.headers.set("ETag", ifNoneMatch)
-            console.log(`Bloc ETag Hit - Fin`);
+            console.log(`Bloc ETag Hit - Fin`)
             return response
         }
 
         // Bloc Cache Miss
-        console.log(`Bloc Cache Miss - Début`);
+        console.log(`Bloc Cache Miss - Début`)
         // Construire la requête de base
         let query = supabase.from("companies").select(`
             symbol,
@@ -195,14 +179,15 @@ export async function GET(request: Request) {
         query = query.range(offset, offset + validatedLimit - 1)
 
         // Exécuter la requête
-        console.log(`Cache Miss - Exécution de la requête Supabase, userId: ${apiKeyValidation.userId}`);
+        console.log(`Cache Miss - Exécution de la requête Supabase, userId: ${apiKeyValidation.userId}`)
         const { data: companies, error, count } = await query
 
         if (error) {
             console.error("Erreur lors de la récupération des entreprises:", error)
-            console.log(`Cache Miss - Tentative d'enregistrement du log d'erreur, userId: ${apiKeyValidation.userId}, keyId: ${apiKeyValidation.keyId}`);
-            await logUsage(apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companies", "error");
-            console.log(`Cache Miss - Log d'erreur enregistré pour userId: ${apiKeyValidation.userId}`);
+
+            // Enregistrer l'erreur de manière asynchrone
+            logUsageAsync(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companiestest", "error")
+
             throw error
         }
 
@@ -241,7 +226,7 @@ export async function GET(request: Request) {
 
         // Nettoyer le cache si nécessaire
         if (MEMORY_CACHE.size > 1000) {
-            console.log(`Nettoyage du cache, taille actuelle: ${MEMORY_CACHE.size}`);
+            console.log(`Nettoyage du cache, taille actuelle: ${MEMORY_CACHE.size}`)
             const entries = [...MEMORY_CACHE.entries()].sort((a, b) => {
                 if (!a[1].timestamp) return -1
                 if (!b[1].timestamp) return 1
@@ -253,13 +238,8 @@ export async function GET(request: Request) {
             }
         }
 
-        // Enregistrer l'utilisation (cache miss)
-        console.log(`Cache Miss - Tentative d'enregistrement du log, userId: ${apiKeyValidation.userId}, keyId: ${apiKeyValidation.keyId}`);
-        await logUsage(apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companies", "success");
-        console.log(`Cache Miss - Log enregistré pour userId: ${apiKeyValidation.userId}`);
-
-        // Forcer un léger délai pour garantir que les journaux sont flushés
-        await delay(50);
+        // Enregistrer l'utilisation (cache miss) de manière asynchrone
+        logUsageAsync(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companiestest", "success")
 
         // Retourner les résultats
         const response = NextResponse.json(responseData)
@@ -267,20 +247,19 @@ export async function GET(request: Request) {
         response.headers.set("Cache-Control", `public, max-age=${CACHE_DURATION}`)
         response.headers.set("ETag", etag)
 
-        console.log(`Bloc Cache Miss - Fin`);
+        console.log(`Bloc Cache Miss - Fin`)
         return response
     } catch (error: any) {
         console.error("Erreur complète:", error)
 
-        // Enregistrer l'erreur
+        // Enregistrer l'erreur de manière asynchrone
         try {
             const apiKeyValidation = await validateApiKey(request)
             if (apiKeyValidation.valid) {
-                console.log(`Bloc Erreur - Tentative d'enregistrement du log d'erreur, userId: ${apiKeyValidation.userId}, keyId: ${apiKeyValidation.keyId}`);
-                await logUsage(apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companies", "error");
-                console.log(`Bloc Erreur - Log d'erreur enregistré pour userId: ${apiKeyValidation.userId}`);
+                const supabase = await createClient()
+                logUsageAsync(supabase, apiKeyValidation.userId, apiKeyValidation.keyId, "/api/companiestest", "error")
             } else {
-                console.log("Validation de la clé API échouée dans le bloc d'erreur:", apiKeyValidation.error);
+                console.log("Validation de la clé API échouée dans le bloc d'erreur:", apiKeyValidation.error)
             }
         } catch (logError) {
             console.error("Erreur lors de l'enregistrement de l'erreur:", logError)
