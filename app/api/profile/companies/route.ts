@@ -59,7 +59,7 @@ export async function GET(request: NextRequest) {
             {
                 status: 200,
                 headers: {
-                    // Set cache control headers for browsers and CDNs
+                    // Set cache control headers for API clients
                     "Cache-Control": "public, max-age=86400, s-maxage=86400, stale-while-revalidate=86400",
                 },
             },
